@@ -87,6 +87,23 @@ typedef enum {
 
 void omni_screen_set_target(omni_screen_kind kind, const char *id);
 
+/* ------------------------------------------------------------------------- */
+/* Call overlay
+ *
+ * One layer per person in the Discord call, drawn over the 16:9 canvas. Each
+ * layer holds an idle and a talking image (both stay loaded, so switching is
+ * instant); positions are in canvas pixels. */
+
+/* Creates the layer if needed and loads its images (PNG paths). */
+void omni_overlay_set_images(const char *key, const char *idle_png, const char *talk_png);
+/* Centre point and box size in canvas pixels; the image keeps its aspect inside
+ * the box. lift moves the talking image up by that many pixels. */
+void omni_overlay_place(const char *key, float cx, float cy, float width, float height, bool flip, float lift);
+void omni_overlay_set_speaking(const char *key, bool speaking);
+void omni_overlay_remove(const char *key);
+/* Shows or hides every layer at once. */
+void omni_overlay_set_visible(bool visible);
+
 /* Camera source device, by AVCaptureDevice uniqueID. */
 void omni_camera_set_device(const char *unique_id);
 const char *omni_camera_device(void);

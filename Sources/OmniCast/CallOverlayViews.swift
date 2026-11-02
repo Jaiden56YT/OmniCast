@@ -1,0 +1,281 @@
+import AppKit
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Sources panel row for the Discord call overlay.
+struct CallSourceRow: View {
+    private var call: DiscordCall { .shared }
+    @Bindable private var overlay = CallOverlay.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.2.wave.2").frame(width: 18)
+                Text("Discord call").font(.system(size: 12))
+                Spacer()
+                Button { overlay.visible.toggle() } label: {
+                    Image(systemName: overlay.visible ? "eye" : "eye.slash")
+                        .foregroundStyle(overlay.visible ? .white.opacity(0.8) : Theme.textDim)
+                }
+                .buttonStyle(.borderless)
+                .help(overlay.visible ? "Hide the call overlay" : "Show the call overlay")
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
+
+            HStack(spacing: 6) {
+                status
+                Spacer(minLength: 4)
+                Button(overlay.arranging ? "Done" : "Arrange") { overlay.arranging.toggle() }
+                    .buttonStyle(.link)
+                    .disabled(!Engine.shared.running)
+            }
+            .font(.system(size: 10))
+            .padding(.leading, 26)
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch call.status {
+        case .notSetUp:
+            SettingsLink { Text("Set up in Settings") }.buttonStyle(.link)
+        case .inCall(let name):
+            Text("\(call.members.count) in \(name)").foregroundStyle(Theme.good).lineLimit(1)
+        case .noCall: Text("Not in a call").foregroundStyle(Theme.textDim)
+        case .connecting: Text("Connecting…").foregroundStyle(Theme.textDim)
+        case .waitingForApproval: Text("Approve in Discord…").foregroundStyle(Theme.warn)
+        case .disconnected: Button("Connect") { call.connect() }.buttonStyle(.link)
+        case .failed(let message): Text(message).foregroundStyle(Theme.record).lineLimit(1).help(message)
+        }
+    }
+}
+
+/// Drawn over the 16:9 preview while arranging: one outline per person, drag to
+/// move, drag the corner to resize, click to select.
+struct CallArrangeLayer: View {
+    @Bindable private var overlay = CallOverlay.shared
+    @State private var dragStart: CGPoint?
+    @State private var sizeStart: Double?
+    private let canvasWidth = 1920.0
+
+    var body: some View {
+        GeometryReader { geo in
+            let scale = geo.size.width / canvasWidth
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.001) // catches clicks on empty space
+                    .onTapGesture { overlay.selected = nil }
+                ForEach(overlay.shown) { member in
+                    box(member, scale: scale)
+                }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            CallArrangePanel().padding(8)
+        }
+    }
+
+    private func box(_ member: CallMember, scale: CGFloat) -> some View {
+        let layout = overlay.layout(for: member.id)
+        let size = overlay.boxSize(for: member.id)
+        let w = size.width * scale, h = size.height * scale
+        let selected = overlay.selected == member.id
+        return ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(selected ? Theme.camera : .white.opacity(0.7),
+                              style: StrokeStyle(lineWidth: selected ? 2 : 1, dash: selected ? [] : [5, 4]))
+                .background(Color.white.opacity(0.04))
+                .overlay(alignment: .top) {
+                    Text(member.name + (layout.flip ? "  ⇋" : ""))
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(.black.opacity(0.6), in: Capsule())
+                        .offset(y: -10)
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStart == nil { dragStart = CGPoint(x: layout.x, y: layout.y) }
+                        overlay.selected = member.id
+                        overlay.update(member.id) {
+                            $0.x = dragStart!.x + value.translation.width / scale
+                            $0.y = dragStart!.y + value.translation.height / scale
+                        }
+                    }
+                    .onEnded { _ in dragStart = nil })
+                .onTapGesture { overlay.selected = member.id }
+            // Resize handle.
+            Circle()
+                .fill(selected ? Theme.camera : .white)
+                .frame(width: 10, height: 10)
+                .offset(x: 5, y: 5)
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if sizeStart == nil { sizeStart = layout.size }
+                        overlay.selected = member.id
+                        overlay.update(member.id) { $0.size = sizeStart! + value.translation.height / scale }
+                    }
+                    .onEnded { _ in sizeStart = nil })
+        }
+        .frame(width: w, height: h)
+        .position(x: layout.x * scale, y: layout.y * scale)
+    }
+}
+
+struct CallArrangePanel: View {
+    @Bindable private var overlay = CallOverlay.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Arrange call").font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button("Done") { overlay.arranging = false }.controlSize(.small)
+            }
+            if DiscordCall.shared.members.isEmpty {
+                Text("Nobody's in a call right now.").font(.system(size: 11)).foregroundStyle(Theme.textDim)
+                Toggle("Show sample people", isOn: $overlay.showSamples).controlSize(.small)
+            }
+            Menu("Auto-arrange") {
+                ForEach(ArrangeStyle.allCases) { style in
+                    Button(style.label) { overlay.autoArrange(style) }
+                }
+            }
+            .controlSize(.small)
+            .disabled(overlay.shown.isEmpty)
+            Toggle("Dim people who aren't talking", isOn: $overlay.dimQuiet).controlSize(.small)
+
+            if let id = overlay.selected, let member = overlay.shown.first(where: { $0.id == id }) {
+                Divider()
+                MemberInspector(member: member)
+            } else if !overlay.shown.isEmpty {
+                Text("Drag people to move them, drag a corner to resize. Click one for more.")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textDim)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(10)
+        .frame(width: 230)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct MemberInspector: View {
+    let member: CallMember
+    private var overlay: CallOverlay { .shared }
+
+    var body: some View {
+        let layout = overlay.layout(for: member.id)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(member.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            HStack {
+                Text("Size")
+                Slider(value: Binding(get: { layout.size }, set: { v in overlay.update(member.id) { $0.size = v } }),
+                       in: 60...700)
+                    .controlSize(.mini)
+            }
+            Toggle("Flip", isOn: Binding(get: { layout.flip }, set: { v in overlay.update(member.id) { $0.flip = v } }))
+                .controlSize(.small)
+            Picker("Image faces", selection: Binding(get: { layout.facesLeft },
+                                                    set: { v in overlay.update(member.id) { $0.facesLeft = v } })) {
+                Text("Right").tag(false)
+                Text("Left").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .help("Which way this person's image looks before flipping; auto-arrange uses it")
+            HStack {
+                Button("Idle image…") { pick { path in overlay.update(member.id) { $0.idlePath = path } } }
+                Button("Talking…") { pick { path in overlay.update(member.id) { $0.talkPath = path } } }
+            }
+            .controlSize(.small)
+            if layout.idlePath != nil || layout.talkPath != nil {
+                Button("Use Discord avatar") {
+                    overlay.update(member.id) {
+                        $0.idlePath = nil
+                        $0.talkPath = nil
+                    }
+                }
+                .buttonStyle(.link)
+            }
+        }
+    }
+
+    private func pick(_ done: (String) -> Void) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .heic]
+        panel.message = "Choose an image for \(member.name). PNGs with transparency work best."
+        if panel.runModal() == .OK, let url = panel.url { done(url.path) }
+    }
+}
+
+/// Settings tab: registering a Discord app and connecting.
+struct DiscordSettingsView: View {
+    @State private var clientID = DiscordCall.shared.clientID
+    @State private var secret = DiscordCall.shared.clientSecret
+    private var call: DiscordCall { .shared }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Discord only shares who's in your call with an app you register yourself. It's free and takes a minute:")
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("1. Open the Developer Portal and click New Application.")
+                    Text("2. Under OAuth2, add the redirect http://localhost and save.")
+                    Text("3. Copy the Client ID and Client Secret into the fields below.")
+                    Text("4. Click Connect, then Authorize in the window Discord shows.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Link("Open the Discord Developer Portal",
+                     destination: URL(string: "https://discord.com/developers/applications")!)
+            }
+            Section {
+                TextField("Client ID", text: $clientID)
+                SecureField("Client Secret", text: $secret)
+                HStack {
+                    Text(statusText).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if case .disconnected = call.status {
+                        connectButton
+                    } else if case .notSetUp = call.status {
+                        connectButton
+                    } else if case .failed = call.status {
+                        connectButton
+                    } else {
+                        Button("Disconnect") { call.disconnect() }
+                    }
+                }
+                Button("Sign out of Discord", role: .destructive) { call.signOut() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+            } footer: {
+                Text("The secret and Discord's sign-in token are kept in your keychain.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var connectButton: some View {
+        Button("Connect") {
+            call.clientID = clientID
+            call.clientSecret = secret
+            call.connect()
+        }
+        .disabled(clientID.isEmpty || secret.isEmpty)
+    }
+
+    private var statusText: String {
+        switch call.status {
+        case .notSetUp: "Not set up"
+        case .disconnected: "Not connected"
+        case .connecting: "Connecting…"
+        case .waitingForApproval: "Click Authorize in Discord"
+        case .noCall: "Connected, not in a call"
+        case .inCall(let name): "Connected · \(name)"
+        case .failed(let message): message
+        }
+    }
+}

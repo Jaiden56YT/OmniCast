@@ -91,11 +91,12 @@ enum DestinationStore {
     }
 }
 
-/// Stream keys live in the login keychain, never in UserDefaults.
+/// Stream keys and Discord credentials live in the login keychain, never in UserDefaults.
 enum Keychain {
-    private static let service = "OmniCast stream key"
+    static let streamKeyService = "OmniCast stream key"
+    static let discordService = "OmniCast Discord"
 
-    static func read(_ account: String) -> String? {
+    static func read(_ account: String, service: String = streamKeyService) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -108,7 +109,7 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func write(_ account: String, _ value: String) {
+    static func write(_ account: String, _ value: String, service: String = streamKeyService) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

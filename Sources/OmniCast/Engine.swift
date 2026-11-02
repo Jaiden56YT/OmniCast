@@ -166,6 +166,7 @@ final class Engine {
         }
         refreshStats()
         virtualCamAvailable = omni_virtualcam_available()
+        CallOverlay.shared.start()
     }
 
     func shutdown() {

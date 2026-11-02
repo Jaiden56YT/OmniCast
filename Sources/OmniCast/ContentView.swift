@@ -133,6 +133,9 @@ struct CanvasPreview: View {
                 } else {
                     Color.black
                 }
+                if canvas == .horizontal, CallOverlay.shared.arranging {
+                    CallArrangeLayer()
+                }
             }
             .aspectRatio(aspect, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -165,6 +168,7 @@ struct SourcesPanel: View {
                 }
                 SourceRow(name: "Camera", icon: "video", isOn: $camera)
                 CameraPicker()
+                CallSourceRow()
                 Spacer(minLength: 8)
                 Theme.hairline.frame(height: 1)
                 Toggle(isOn: $showPreview) {

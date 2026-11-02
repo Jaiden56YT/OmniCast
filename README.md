@@ -42,6 +42,27 @@ next launch, and anything that's gone falls back to the main display.
 Only one of screen capture or the capture device runs at a time; the other is
 disabled so it doesn't render in the background.
 
+## Discord call overlay
+
+Puts the people in your Discord voice call on the 16:9 canvas, PNGtuber style:
+each person has an idle and a talking image (their Discord avatar by default,
+dimmed while quiet, with a green ring and a small hop while talking), and you
+can give anyone custom images.
+
+- **Sources → Discord call → Arrange**: drag people on the preview, drag a corner
+  to resize, click someone to flip them, set which way their image faces, or pick
+  images. Auto-arrange lines everyone up facing right, left, or the middle.
+  "Show sample people" lets you set this up without a call.
+- Positions are saved per Discord user, so people land in the same spot each call.
+
+Setup, once: Discord only shares voice events with an app you register yourself.
+Create an app at https://discord.com/developers/applications, add the OAuth2
+redirect `http://localhost`, paste its Client ID and Client Secret into
+Settings → Discord, click Connect and then Authorize in Discord. OmniCast talks to
+the Discord app on this Mac over its local RPC socket (regular, Canary and PTB),
+follows whichever one you're in a call on, and keeps the secret and token in the
+keychain.
+
 ## Virtual camera
 
 Controls → Virtual Camera sends one canvas, 16:9 **or** 9:16, to the

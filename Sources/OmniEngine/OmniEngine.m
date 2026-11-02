@@ -459,9 +459,12 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 
 static void release_record_slots(void);
 
+static void overlay_clear(void);
+
 void omni_engine_shutdown(void)
 {
 	omni_virtualcam_stop();
+	overlay_clear();
 	omni_stream_stop();
 	/* Give the recordings a moment to write their final index. */
 	omni_record_stop();
@@ -1424,3 +1427,138 @@ void omni_virtualcam_stop(void)
 	vcam_release();
 }
 
+/* ------------------------------------------------------------------------- */
+/* Call overlay */
+
+#define MAX_OVERLAY 32
+
+struct overlay_layer {
+	char key[64];
+	obs_source_t *idle;
+	obs_source_t *talk;
+	obs_sceneitem_t *idle_item;
+	obs_sceneitem_t *talk_item;
+	bool speaking;
+};
+
+static struct {
+	struct overlay_layer layers[MAX_OVERLAY];
+	bool hidden;
+} overlay;
+
+static struct overlay_layer *overlay_find(const char *key, bool create)
+{
+	struct overlay_layer *free_slot = NULL;
+	for (int i = 0; i < MAX_OVERLAY; i++) {
+		struct overlay_layer *l = &overlay.layers[i];
+		if (l->key[0] && strcmp(l->key, key) == 0)
+			return l;
+		if (!l->key[0] && !free_slot)
+			free_slot = l;
+	}
+	if (create && free_slot)
+		snprintf(free_slot->key, sizeof(free_slot->key), "%s", key);
+	return create ? free_slot : NULL;
+}
+
+static void overlay_apply_visibility(struct overlay_layer *l)
+{
+	if (l->idle_item)
+		obs_sceneitem_set_visible(l->idle_item, !overlay.hidden && !l->speaking);
+	if (l->talk_item)
+		obs_sceneitem_set_visible(l->talk_item, !overlay.hidden && l->speaking);
+}
+
+static void overlay_load(obs_source_t **source, obs_sceneitem_t **item, const char *name, const char *path)
+{
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "file", path);
+	if (*source) {
+		obs_source_update(*source, s);
+	} else {
+		*source = obs_source_create_private("image_source", name, s);
+		*item = *source ? obs_scene_add(engine.scene_h, *source) : NULL;
+		if (*item) {
+			/* Centre-aligned, so flipping mirrors in place. */
+			obs_sceneitem_set_alignment(*item, OBS_ALIGN_CENTER);
+			obs_sceneitem_set_bounds_type(*item, OBS_BOUNDS_SCALE_INNER);
+			obs_sceneitem_set_bounds_alignment(*item, OBS_ALIGN_CENTER);
+		}
+	}
+	obs_data_release(s);
+}
+
+void omni_overlay_set_images(const char *key, const char *idle_png, const char *talk_png)
+{
+	if (!engine.running || !key || !*key)
+		return;
+	struct overlay_layer *l = overlay_find(key, true);
+	if (!l)
+		return;
+	overlay_load(&l->idle, &l->idle_item, "Call member", idle_png);
+	overlay_load(&l->talk, &l->talk_item, "Call member talking", talk_png);
+	overlay_apply_visibility(l);
+}
+
+void omni_overlay_place(const char *key, float cx, float cy, float width, float height, bool flip, float lift)
+{
+	struct overlay_layer *l = overlay_find(key, false);
+	if (!l)
+		return;
+	struct vec2 bounds = {.x = width, .y = height};
+	struct vec2 scale = {.x = flip ? -1.0f : 1.0f, .y = 1.0f};
+	obs_sceneitem_t *items[2] = {l->idle_item, l->talk_item};
+	for (int i = 0; i < 2; i++) {
+		if (!items[i])
+			continue;
+		struct vec2 pos = {.x = cx, .y = i == 1 ? cy - lift : cy};
+		obs_sceneitem_set_pos(items[i], &pos);
+		obs_sceneitem_set_bounds(items[i], &bounds);
+		obs_sceneitem_set_scale(items[i], &scale);
+	}
+}
+
+void omni_overlay_set_speaking(const char *key, bool speaking)
+{
+	struct overlay_layer *l = overlay_find(key, false);
+	if (!l || l->speaking == speaking)
+		return;
+	l->speaking = speaking;
+	overlay_apply_visibility(l);
+}
+
+static void overlay_free(struct overlay_layer *l)
+{
+	if (l->idle_item)
+		obs_sceneitem_remove(l->idle_item);
+	if (l->talk_item)
+		obs_sceneitem_remove(l->talk_item);
+	obs_source_release(l->idle);
+	obs_source_release(l->talk);
+	memset(l, 0, sizeof(*l));
+}
+
+void omni_overlay_remove(const char *key)
+{
+	struct overlay_layer *l = overlay_find(key, false);
+	if (l)
+		overlay_free(l);
+}
+
+void omni_overlay_set_visible(bool visible)
+{
+	overlay.hidden = !visible;
+	for (int i = 0; i < MAX_OVERLAY; i++) {
+		if (overlay.layers[i].key[0])
+			overlay_apply_visibility(&overlay.layers[i]);
+	}
+}
+
+static void overlay_clear(void)
+{
+	for (int i = 0; i < MAX_OVERLAY; i++) {
+		if (overlay.layers[i].key[0])
+			overlay_free(&overlay.layers[i]);
+	}
+	overlay.hidden = false;
+}
