@@ -1,0 +1,5 @@
+.build/
+build/
+vendor/obs-studio/
+vendor/include/simde/
+.DS_Store
