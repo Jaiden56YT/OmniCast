@@ -29,13 +29,6 @@ struct CanvasSettings {
     }
 }
 
-enum AudioChannel: CaseIterable, Identifiable {
-    case desktop, mic
-    var id: Self { self }
-    var name: String { self == .desktop ? "Desktop Audio" : "Mic" }
-    var c: omni_audio_source { self == .desktop ? OMNI_AUDIO_DESKTOP : OMNI_AUDIO_MIC }
-}
-
 @MainActor
 @Observable
 final class Engine {
@@ -399,38 +392,8 @@ final class Engine {
         omni_source_set_enabled(name, enabled)
     }
 
-    /// Fader position 0...1 maps to gain with a cubic curve, like OBS's mixer.
-    func setVolume(_ channel: AudioChannel, fader: Double) {
-        UserDefaults.standard.set(fader, forKey: "fader.\(channel)")
-        omni_audio_set_volume(channel.c, Float(pow(fader, 3)))
-    }
-
-    func setMuted(_ channel: AudioChannel, _ muted: Bool) {
-        UserDefaults.standard.set(muted, forKey: "muted.\(channel)")
-        omni_audio_set_muted(channel.c, muted)
-    }
-
-    func fader(_ channel: AudioChannel) -> Double {
-        UserDefaults.standard.object(forKey: "fader.\(channel)") as? Double ?? 1
-    }
-
-    func isMuted(_ channel: AudioChannel) -> Bool {
-        UserDefaults.standard.bool(forKey: "muted.\(channel)")
-    }
-
-    /// Peak levels in dBFS. Read straight from the audio thread's meter, so this is
-    /// cheap enough to call every display frame without going through observation.
-    nonisolated func levels(_ channel: AudioChannel) -> (Float, Float) {
-        var l: Float = -.infinity, r: Float = -.infinity
-        omni_audio_levels(channel.c, &l, &r)
-        return (l, r)
-    }
-
     private func applySavedMixer() {
-        for channel in AudioChannel.allCases {
-            setVolume(channel, fader: fader(channel))
-            setMuted(channel, isMuted(channel))
-        }
+        Mixer.shared.apply()
         if let saved = UserDefaults.standard.string(forKey: "cameraDevice"),
            cameraDevices.contains(where: { $0.uniqueID == saved }) {
             omni_camera_set_device(saved)

@@ -104,18 +104,66 @@ bool omni_stream_output_stats(int index, int *dropped, uint64_t *bytes);
 void omni_get_stats(omni_stats *stats);
 
 /* ------------------------------------------------------------------------- */
-/* Audio mixer */
+/* Audio mixer
+ *
+ * Every channel has two levels: the stream level (what the streams and recordings
+ * get) and the monitor level (what plays on the monitor output, e.g. headphones).
+ * Channel 0 is the mic, 1 is system audio, app channels take the rest.
+ *
+ * App and system audio come from Core Audio process taps, which also silence the
+ * tapped app's own output while OmniCast runs, so it's heard only through the
+ * monitor mix. Quitting OmniCast gives every app its normal output back. */
 
-typedef enum {
-	OMNI_AUDIO_DESKTOP = 0,
-	OMNI_AUDIO_MIC = 1,
-} omni_audio_source;
+#define OMNI_MIXER_MAX_CHANNELS 16
+#define OMNI_CHANNEL_MIC 0
+#define OMNI_CHANNEL_SYSTEM 1
 
-/* Latest peak per channel in dBFS (-INFINITY when silent). Safe from any thread. */
-void omni_audio_levels(omni_audio_source src, float *left_db, float *right_db);
+/* False before macOS 14.2: no app channels, and the monitor mix has the mic only. */
+bool omni_mixer_apps_supported(void);
+/* Adds a channel for an app (and its helper processes) by bundle identifier.
+ * Returns the channel, or -1 when all channels are taken. */
+int omni_mixer_add_app(const char *bundle_id);
+void omni_mixer_remove_app(int channel);
+
+/* Peak per side in dBFS since the last call, before either fader (-INFINITY when
+ * silent). Safe from any thread. */
+void omni_mixer_levels(int channel, float *left_db, float *right_db);
 /* Linear gain, 1.0 = unity. */
-void omni_audio_set_volume(omni_audio_source src, float mul);
-void omni_audio_set_muted(omni_audio_source src, bool muted);
+void omni_mixer_set_stream(int channel, float mul, bool muted);
+void omni_mixer_set_monitor(int channel, float mul, bool muted);
+
+typedef struct {
+	char uid[256];
+	char name[256];
+} omni_audio_device;
+
+/* Output devices for the monitor mix; returns how many were written. */
+int omni_monitor_devices(omni_audio_device *out, int max);
+/* Device UID, or "" to follow the system default output. */
+void omni_monitor_set_device(const char *uid);
+
+/* Which input of the mic's device is the mic. Interfaces such as the Volt 2 have
+ * two inputs; the chosen one is sent to both sides, before the plugins. */
+typedef enum {
+	OMNI_MIC_INPUT_1 = 0,
+	OMNI_MIC_INPUT_2 = 1,
+	OMNI_MIC_STEREO = 2,
+} omni_mic_input;
+
+void omni_mic_set_input(omni_mic_input input);
+
+/* Mic plugins. Only these Audio Units are ever loaded (by component ID, no plugin
+ * scan), and only while turned on. They run in this order. */
+typedef enum {
+	OMNI_PLUGIN_STACKS = 0,
+	OMNI_PLUGIN_MUZE = 1,
+	OMNI_PLUGIN_COUNT = 2,
+} omni_plugin;
+
+bool omni_plugin_installed(omni_plugin plugin);
+void omni_plugin_set_enabled(omni_plugin plugin, bool enabled);
+/* Opens the plugin's own window; it opens once the plugin has loaded. */
+void omni_plugin_show_editor(omni_plugin plugin);
 
 /* ------------------------------------------------------------------------- */
 /* Recording

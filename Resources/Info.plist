@@ -13,6 +13,7 @@
 	<key>NSHighResolutionCapable</key><true/>
 	<key>NSCameraUsageDescription</key><string>OmniCast shows your camera in the stream.</string>
 	<key>NSMicrophoneUsageDescription</key><string>OmniCast streams your microphone.</string>
+	<key>NSAudioCaptureUsageDescription</key><string>OmniCast mixes app and system audio for your stream and headphones.</string>
 	<key>NSScreenCaptureUsageDescription</key><string>OmniCast streams your screen and desktop audio.</string>
 </dict>
 </plist>

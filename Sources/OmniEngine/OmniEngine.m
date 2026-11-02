@@ -6,6 +6,7 @@
 #import <CoreVideo/CoreVideo.h>
 
 #include "OmniEngine.h"
+#include "OmniAudio.h"
 
 #include <obs.h>
 #include <util/platform.h>
@@ -28,12 +29,6 @@ static const char *disabled_modules[] = {
 struct output_ctx {
 	int index;
 	uint64_t generation;
-};
-
-struct meter_ctx {
-	obs_volmeter_t *meter;
-	_Atomic float left;
-	_Atomic float right;
 };
 
 struct record_slot {
@@ -83,8 +78,6 @@ static struct {
 
 	omni_status_callback status_cb;
 	void *status_ctx;
-
-	struct meter_ctx meters[2]; /* omni_audio_source */
 
 	/* Track 1 is the full mix (what the stream gets), 2 desktop only, 3 mic only. */
 	obs_encoder_t *aenc_rec[RECORD_AUDIO_TRACKS];
@@ -305,8 +298,13 @@ static void create_sources(void)
 	obs_data_release(s);
 
 	s = obs_data_create();
-	obs_data_set_int(s, "type", 0); /* all desktop audio */
-	engine.desktop_audio = obs_source_create("sck_audio_capture", "Desktop Audio", s, NULL);
+	if (omni_audio_taps_supported()) {
+		/* A process tap, so apps with their own mixer channel can be left out. */
+		engine.desktop_audio = omni_audio_create_system_source("Desktop Audio");
+	} else {
+		obs_data_set_int(s, "type", 0); /* all desktop audio */
+		engine.desktop_audio = obs_source_create("sck_audio_capture", "Desktop Audio", s, NULL);
+	}
 	obs_data_release(s);
 
 	s = obs_data_create();
@@ -326,78 +324,6 @@ static void create_sources(void)
 		obs_source_set_audio_mixers(engine.desktop_audio, (1 << 0) | (1 << 1));
 	if (engine.mic)
 		obs_source_set_audio_mixers(engine.mic, (1 << 0) | (1 << 2));
-}
-
-/* ------------------------------------------------------------------------- */
-/* Audio meters */
-
-static void on_levels(void *param, const float magnitude[MAX_AUDIO_CHANNELS], const float peak[MAX_AUDIO_CHANNELS],
-		      const float input_peak[MAX_AUDIO_CHANNELS])
-{
-	UNUSED_PARAMETER(magnitude);
-	UNUSED_PARAMETER(input_peak);
-	struct meter_ctx *m = param;
-	bool mono = obs_volmeter_get_nr_channels(m->meter) < 2;
-	atomic_store_explicit(&m->left, peak[0], memory_order_relaxed);
-	atomic_store_explicit(&m->right, mono ? peak[0] : peak[1], memory_order_relaxed);
-}
-
-static obs_source_t *audio_source(omni_audio_source src)
-{
-	return src == OMNI_AUDIO_DESKTOP ? engine.desktop_audio : engine.mic;
-}
-
-static void create_meters(void)
-{
-	for (int i = 0; i < 2; i++) {
-		struct meter_ctx *m = &engine.meters[i];
-		atomic_store(&m->left, -INFINITY);
-		atomic_store(&m->right, -INFINITY);
-		obs_source_t *src = audio_source((omni_audio_source)i);
-		if (!src)
-			continue;
-		m->meter = obs_volmeter_create(OBS_FADER_LOG);
-		obs_volmeter_attach_source(m->meter, src);
-		obs_volmeter_add_callback(m->meter, on_levels, m);
-	}
-}
-
-static void destroy_meters(void)
-{
-	for (int i = 0; i < 2; i++) {
-		struct meter_ctx *m = &engine.meters[i];
-		if (!m->meter)
-			continue;
-		obs_volmeter_remove_callback(m->meter, on_levels, m);
-		obs_volmeter_destroy(m->meter);
-		m->meter = NULL;
-	}
-}
-
-void omni_audio_levels(omni_audio_source src, float *left_db, float *right_db)
-{
-	struct meter_ctx *m = &engine.meters[src == OMNI_AUDIO_MIC];
-	if (!m->meter) {
-		/* Before the engine starts the levels are zero-filled, which reads as 0 dBFS. */
-		*left_db = *right_db = -INFINITY;
-		return;
-	}
-	*left_db = atomic_load_explicit(&m->left, memory_order_relaxed);
-	*right_db = atomic_load_explicit(&m->right, memory_order_relaxed);
-}
-
-void omni_audio_set_volume(omni_audio_source src, float mul)
-{
-	obs_source_t *s = audio_source(src);
-	if (s)
-		obs_source_set_volume(s, mul);
-}
-
-void omni_audio_set_muted(omni_audio_source src, bool muted)
-{
-	obs_source_t *s = audio_source(src);
-	if (s)
-		obs_source_set_muted(s, muted);
 }
 
 static obs_sceneitem_t *place(obs_scene_t *scene, obs_source_t *source, float x, float y, float cx, float cy,
@@ -479,6 +405,7 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 	obs_log_loaded_modules();
 	obs_post_load_modules();
 	register_vcam_output();
+	omni_audio_register();
 
 	struct obs_video_info vovi;
 	fill_video_info(&vovi, NULL, &engine.vertical, engine.vertical.fps);
@@ -491,7 +418,7 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 
 	create_sources();
 	engine.screen_visible = true;
-	create_meters();
+	omni_audio_start(config_dir, engine.mic, engine.desktop_audio);
 	build_scenes();
 
 	pick_video_encoders();
@@ -549,7 +476,7 @@ void omni_engine_shutdown(void)
 	obs_encoder_release(engine.aenc);
 	for (size_t t = 0; t < RECORD_AUDIO_TRACKS; t++)
 		obs_encoder_release(engine.aenc_rec[t]);
-	destroy_meters();
+	omni_audio_stop();
 
 	for (uint32_t ch = 0; ch < 6; ch++)
 		obs_set_output_source(ch, NULL);
@@ -1496,3 +1423,4 @@ void omni_virtualcam_stop(void)
 	}
 	vcam_release();
 }
+
