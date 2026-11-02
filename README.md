@@ -31,6 +31,17 @@ It runs on libobs, the OBS engine, taken from the installed `/Applications/OBS.a
 Measured on the M4 MacBook Air, recording both canvases at once for 30 s:
 1800/1800 frames, every frame exactly 16.7 ms apart, 0 encoder drops.
 
+## What the screen slot captures
+
+Sources → Display has a picker: any **display**, a single **window**, a whole
+**app** (all its windows), or a **capture device** such as a capture card
+(with its audio). Capture devices are listed second so a capture card is one
+click away. The choice is remembered; a window is found again by app and title
+next launch, and anything that's gone falls back to the main display.
+
+Only one of screen capture or the capture device runs at a time; the other is
+disabled so it doesn't render in the background.
+
 ## Virtual camera
 
 Controls → Virtual Camera sends one canvas, 16:9 **or** 9:16, to the

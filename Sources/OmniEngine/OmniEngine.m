@@ -58,6 +58,14 @@ static struct {
 
 	obs_source_t *display;
 	obs_source_t *camera;
+	/* The screen slot shows either `display` (screen_capture: a display, window
+	 * or app) or `capture_dev` (a capture card), never both; the other's scene
+	 * items are hidden and the source disabled so it doesn't render. */
+	obs_source_t *capture_dev;
+	obs_sceneitem_t *screen_items[2]; /* omni_canvas */
+	obs_sceneitem_t *device_items[2];
+	bool screen_on_device;
+	bool screen_visible;
 	obs_source_t *desktop_audio;
 	obs_source_t *mic;
 
@@ -392,11 +400,11 @@ void omni_audio_set_muted(omni_audio_source src, bool muted)
 		obs_source_set_muted(s, muted);
 }
 
-static void place(obs_scene_t *scene, obs_source_t *source, float x, float y, float cx, float cy,
-		  enum obs_bounds_type type, bool crop)
+static obs_sceneitem_t *place(obs_scene_t *scene, obs_source_t *source, float x, float y, float cx, float cy,
+			      enum obs_bounds_type type, bool crop)
 {
 	if (!source)
-		return;
+		return NULL;
 	obs_sceneitem_t *item = obs_scene_add(scene, source);
 	struct vec2 pos = {.x = x, .y = y};
 	struct vec2 bounds = {.x = cx, .y = cy};
@@ -404,13 +412,24 @@ static void place(obs_scene_t *scene, obs_source_t *source, float x, float y, fl
 	obs_sceneitem_set_bounds_type(item, type);
 	obs_sceneitem_set_bounds(item, &bounds);
 	obs_sceneitem_set_bounds_crop(item, crop);
+	return item;
+}
+
+/* Where the screen slot sits on each canvas: full frame on 16:9, top half on 9:16. */
+static obs_sceneitem_t *place_screen(omni_canvas canvas, obs_source_t *source)
+{
+	if (canvas == OMNI_CANVAS_HORIZONTAL)
+		return place(engine.scene_h, source, 0, 0, (float)engine.horizontal.width,
+			     (float)engine.horizontal.height, OBS_BOUNDS_SCALE_INNER, false);
+	return place(engine.scene_v, source, 0, 0, (float)engine.vertical.width, engine.vertical.height * 0.5f,
+		     OBS_BOUNDS_SCALE_INNER, false);
 }
 
 static void build_scenes(void)
 {
 	float w = (float)engine.horizontal.width, h = (float)engine.horizontal.height;
 	engine.scene_h = obs_scene_create("Horizontal");
-	place(engine.scene_h, engine.display, 0, 0, w, h, OBS_BOUNDS_SCALE_INNER, false);
+	engine.screen_items[OMNI_CANVAS_HORIZONTAL] = place_screen(OMNI_CANVAS_HORIZONTAL, engine.display);
 	float cam_w = w * 0.25f, cam_h = h * 0.25f, margin = h * 0.025f;
 	place(engine.scene_h, engine.camera, w - cam_w - margin, h - cam_h - margin, cam_w, cam_h,
 	      OBS_BOUNDS_SCALE_INNER, false);
@@ -420,7 +439,7 @@ static void build_scenes(void)
 	w = (float)engine.vertical.width;
 	h = (float)engine.vertical.height;
 	engine.scene_v = obs_canvas_scene_create(engine.vertical_canvas, "Vertical");
-	place(engine.scene_v, engine.display, 0, 0, w, h * 0.5f, OBS_BOUNDS_SCALE_INNER, false);
+	engine.screen_items[OMNI_CANVAS_VERTICAL] = place_screen(OMNI_CANVAS_VERTICAL, engine.display);
 	place(engine.scene_v, engine.camera, 0, h * 0.5f, w, h * 0.5f, OBS_BOUNDS_SCALE_OUTER, true);
 	obs_canvas_set_channel(engine.vertical_canvas, 0, obs_scene_get_source(engine.scene_v));
 }
@@ -471,6 +490,7 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 	}
 
 	create_sources();
+	engine.screen_visible = true;
 	create_meters();
 	build_scenes();
 
@@ -550,6 +570,7 @@ void omni_engine_shutdown(void)
 	obs_scene_release(engine.scene_h);
 	obs_scene_release(engine.scene_v);
 	obs_source_release(engine.display);
+	obs_source_release(engine.capture_dev);
 	obs_source_release(engine.camera);
 	obs_source_release(engine.desktop_audio);
 	obs_source_release(engine.mic);
@@ -638,9 +659,71 @@ void omni_preview_detach(omni_canvas canvas)
 /* ------------------------------------------------------------------------- */
 /* Sources */
 
+static void apply_screen(void)
+{
+	bool dev = engine.screen_on_device;
+	for (int c = 0; c < 2; c++) {
+		if (engine.screen_items[c])
+			obs_sceneitem_set_visible(engine.screen_items[c], !dev);
+		if (engine.device_items[c])
+			obs_sceneitem_set_visible(engine.device_items[c], dev);
+	}
+	if (engine.display)
+		obs_source_set_enabled(engine.display, engine.screen_visible && !dev);
+	if (engine.capture_dev)
+		obs_source_set_enabled(engine.capture_dev, engine.screen_visible && dev);
+}
+
+void omni_screen_set_target(omni_screen_kind kind, const char *id)
+{
+	if (!engine.running || !id || !*id)
+		return;
+
+	obs_data_t *s = obs_data_create();
+	if (kind == OMNI_SCREEN_DEVICE) {
+		obs_data_set_string(s, "device", id);
+		obs_data_set_bool(s, "use_preset", true);
+		obs_data_set_string(s, "preset", AVCaptureSessionPresetHigh.UTF8String);
+		/* Capture cards carry the console's or camera's sound. */
+		obs_data_set_bool(s, "enable_audio", true);
+		if (engine.capture_dev) {
+			obs_source_update(engine.capture_dev, s);
+		} else {
+			engine.capture_dev = obs_source_create("macos-avcapture", "Capture Device", s, NULL);
+			for (int c = 0; c < 2; c++) {
+				engine.device_items[c] = place_screen((omni_canvas)c, engine.capture_dev);
+				/* Under the camera, like the screen it stands in for. */
+				if (engine.device_items[c])
+					obs_sceneitem_set_order(engine.device_items[c], OBS_ORDER_MOVE_BOTTOM);
+			}
+		}
+		engine.screen_on_device = engine.capture_dev != NULL;
+	} else {
+		/* screen_capture's own type values: 0 display, 1 window, 2 application. */
+		obs_data_set_int(s, "type", kind);
+		if (kind == OMNI_SCREEN_DISPLAY) {
+			obs_data_set_string(s, "display_uuid", id);
+		} else if (kind == OMNI_SCREEN_WINDOW) {
+			obs_data_set_int(s, "window", strtoll(id, NULL, 10));
+		} else {
+			obs_data_set_string(s, "application", id);
+			obs_data_set_string(s, "display_uuid", main_display_uuid().UTF8String);
+		}
+		obs_source_update(engine.display, s);
+		engine.screen_on_device = false;
+	}
+	obs_data_release(s);
+	apply_screen();
+}
+
 void omni_source_set_enabled(const char *name, bool enabled)
 {
-	obs_source_t *sources[] = {engine.display, engine.camera, engine.desktop_audio, engine.mic};
+	if (strcmp(name, "Display") == 0) {
+		engine.screen_visible = enabled;
+		apply_screen();
+		return;
+	}
+	obs_source_t *sources[] = {engine.camera, engine.desktop_audio, engine.mic};
 	for (size_t i = 0; i < sizeof(sources) / sizeof(sources[0]); i++) {
 		if (sources[i] && strcmp(obs_source_get_name(sources[i]), name) == 0)
 			obs_source_set_enabled(sources[i], enabled);

@@ -77,6 +77,16 @@ void omni_preview_detach(omni_canvas canvas);
 /* Default source toggles: "Display", "Camera", "Desktop Audio", "Mic". */
 void omni_source_set_enabled(const char *name, bool enabled);
 
+/* What the screen slot (the "Display" source) shows. */
+typedef enum {
+	OMNI_SCREEN_DISPLAY = 0, /* id: display UUID */
+	OMNI_SCREEN_WINDOW = 1,  /* id: CGWindowID in decimal */
+	OMNI_SCREEN_APP = 2,     /* id: bundle identifier; all of the app's windows */
+	OMNI_SCREEN_DEVICE = 3,  /* id: AVCaptureDevice uniqueID, e.g. a capture card */
+} omni_screen_kind;
+
+void omni_screen_set_target(omni_screen_kind kind, const char *id);
+
 /* Camera source device, by AVCaptureDevice uniqueID. */
 void omni_camera_set_device(const char *unique_id);
 const char *omni_camera_device(void);

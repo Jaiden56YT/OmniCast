@@ -155,6 +155,7 @@ struct SourcesPanel: View {
         Panel(title: "Sources") {
             VStack(alignment: .leading, spacing: 6) {
                 SourceRow(name: "Display", icon: "display", isOn: $display)
+                ScreenPicker()
                 if !Engine.shared.screenAccess {
                     Button("Allow screen access…") { Engine.shared.requestScreenAccess() }
                         .buttonStyle(.link)
@@ -174,6 +175,93 @@ struct SourcesPanel: View {
                 }
                 .toggleStyle(.switch)
                 .controlSize(.mini)
+            }
+        }
+    }
+}
+
+/// Chooses what the screen slot captures. The lists are read when the popover
+/// opens, so windows opened since launch show up.
+struct ScreenPicker: View {
+    @State private var open = false
+    private var engine: Engine { .shared }
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: engine.screenTarget?.kind.icon ?? "display")
+                Text(engine.screenTarget?.name ?? "Main display").lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.white.opacity(0.8))
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 26)
+        .disabled(!engine.running)
+        .help("Capture a display, one window, an app, or a capture card")
+        .popover(isPresented: $open, arrowEdge: .trailing) {
+            ScreenTargetList { target in
+                engine.setScreenTarget(target)
+                open = false
+            }
+        }
+    }
+}
+
+struct ScreenTargetList: View {
+    let onPick: (ScreenTarget) -> Void
+    @State private var displays: [ScreenTarget] = []
+    @State private var windows: [ScreenTarget] = []
+    @State private var apps: [ScreenTarget] = []
+    @State private var devices: [ScreenTarget] = []
+    private var current: ScreenTarget? { Engine.shared.screenTarget }
+
+    var body: some View {
+        List {
+            section("Displays", displays)
+            section("Capture devices", devices, empty: "Plug in a capture card to see it here")
+            section("Windows", windows, empty: "No windows found")
+            section("Apps", apps)
+            if !Engine.shared.screenAccess {
+                Text("Window titles and screen capture need Screen Recording access.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .listStyle(.sidebar)
+        .frame(width: 320, height: 420)
+        .onAppear {
+            displays = ScreenTarget.displays()
+            windows = ScreenTarget.windows()
+            apps = ScreenTarget.apps()
+            devices = ScreenTarget.devices()
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ title: String, _ items: [ScreenTarget], empty: String? = nil) -> some View {
+        Section(title) {
+            if items.isEmpty, let empty {
+                Text(empty).font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(items) { target in
+                Button { onPick(target) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: target.kind.icon).frame(width: 16).foregroundStyle(.secondary)
+                        Text(target.name).lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        if target.kind == current?.kind, target.id == current?.id {
+                            Image(systemName: "checkmark").foregroundStyle(Theme.good)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }

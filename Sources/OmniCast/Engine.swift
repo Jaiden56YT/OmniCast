@@ -352,6 +352,33 @@ final class Engine {
     }
 
     private(set) var cameraDevice = ""
+
+    /// What the screen slot shows; nil means the main display (the engine's default).
+    private(set) var screenTarget: ScreenTarget?
+
+    func setScreenTarget(_ target: ScreenTarget) {
+        omni_screen_set_target(target.kind.c, target.id)
+        screenTarget = target
+        if let data = try? JSONEncoder().encode(target) {
+            UserDefaults.standard.set(data, forKey: "screenTarget")
+        }
+    }
+
+    private func applySavedScreenTarget() {
+        guard let data = UserDefaults.standard.data(forKey: "screenTarget"),
+              let saved = try? JSONDecoder().decode(ScreenTarget.self, from: data) else {
+            screenTarget = ScreenTarget.mainDisplay
+            return
+        }
+        // A window or app that's closed falls back to the main display for this
+        // session, without forgetting the saved choice.
+        if let target = saved.resolved() {
+            omni_screen_set_target(target.kind.c, target.id)
+            screenTarget = target
+        } else {
+            screenTarget = ScreenTarget.mainDisplay
+        }
+    }
     /// Whether macOS lets OmniCast capture the screen; it only changes after a relaunch.
     private(set) var screenAccess = true
 
@@ -409,6 +436,7 @@ final class Engine {
             omni_camera_set_device(saved)
         }
         cameraDevice = String(cString: omni_camera_device())
+        applySavedScreenTarget()
         for name in ["Display", "Camera"] where UserDefaults.standard.object(forKey: "source.\(name)") != nil {
             setSource(name, enabled: UserDefaults.standard.bool(forKey: "source.\(name)"))
         }
