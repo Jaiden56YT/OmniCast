@@ -15,6 +15,8 @@ struct OmniCastApp: App {
             CommandMenu("Controls") {
                 RecordCommand()
                 LiveCommand()
+                Divider()
+                VirtualCamCommand()
             }
         }
         Settings {
@@ -40,6 +42,15 @@ private struct LiveCommand: View {
         Button(engine.live ? "End Stream" : "Go Live") { engine.live ? engine.stopLive() : engine.goLive() }
             .keyboardShortcut("l", modifiers: [.command, .shift])
             .disabled(!engine.running || (!engine.live && !engine.destinations.contains { $0.enabled && $0.isReady }))
+    }
+}
+
+private struct VirtualCamCommand: View {
+    private var engine: Engine { .shared }
+
+    var body: some View {
+        Button(engine.virtualCamActive ? "Stop Virtual Camera" : "Start Virtual Camera") { engine.toggleVirtualCam() }
+            .disabled(!engine.running)
     }
 }
 

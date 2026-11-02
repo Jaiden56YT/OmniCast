@@ -9,7 +9,7 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
-            if let error = engine.startError ?? engine.recordError {
+            if let error = engine.startError ?? engine.recordError ?? engine.virtualCamError {
                 Banner(text: error)
             }
             stage
@@ -20,7 +20,8 @@ struct ContentView: View {
                 ControlsPanel().frame(width: 250)
             }
             .padding(10)
-            .frame(height: 280)
+            // Every panel gets the height of the tallest one's content, so nothing is clipped.
+            .fixedSize(horizontal: false, vertical: true)
             StatusBar()
         }
         .background(Theme.background)
@@ -105,6 +106,7 @@ struct CanvasPreview: View {
     private var size: CanvasSettings { canvas == .horizontal ? engine.horizontal : engine.vertical }
     private var recording: Bool { engine.recordingCanvases.contains(canvas) }
     private var live: Bool { engine.liveCanvases.contains(canvas) }
+    private var camera: Bool { engine.virtualCamActive && engine.virtualCamCanvas == canvas }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -117,6 +119,7 @@ struct CanvasPreview: View {
                 Spacer(minLength: 0)
                 if recording { Badge(text: "REC", color: Theme.record) }
                 if live { Badge(text: "LIVE", color: Theme.live) }
+                if camera { Badge(text: "CAM", color: Theme.camera) }
             }
             .frame(height: 22)
             ZStack {
@@ -152,7 +155,15 @@ struct SourcesPanel: View {
         Panel(title: "Sources") {
             VStack(alignment: .leading, spacing: 6) {
                 SourceRow(name: "Display", icon: "display", isOn: $display)
+                if !Engine.shared.screenAccess {
+                    Button("Allow screen access…") { Engine.shared.requestScreenAccess() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                        .padding(.leading, 26)
+                        .help("Turn on OmniCast in System Settings → Privacy & Security → Screen & System Audio Recording, then reopen OmniCast")
+                }
                 SourceRow(name: "Camera", icon: "video", isOn: $camera)
+                CameraPicker()
                 Spacer(minLength: 8)
                 Theme.hairline.frame(height: 1)
                 Toggle(isOn: $showPreview) {
@@ -165,6 +176,24 @@ struct SourcesPanel: View {
                 .controlSize(.mini)
             }
         }
+    }
+}
+
+struct CameraPicker: View {
+    @Bindable private var engine = Engine.shared
+
+    var body: some View {
+        Picker("Camera device", selection: Binding(get: { engine.cameraDevice },
+                                                   set: { engine.setCamera($0) })) {
+            ForEach(engine.cameraDevices, id: \.uniqueID) { device in
+                Text(device.localizedName).tag(device.uniqueID)
+            }
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .padding(.leading, 26)
+        .disabled(!engine.running)
+        .help("Which camera the Camera source shows")
     }
 }
 
@@ -208,6 +237,8 @@ struct ControlsPanel: View {
                 recordSection
                 Theme.hairline.frame(height: 1)
                 liveSection
+                Theme.hairline.frame(height: 1)
+                virtualCamSection
             }
         }
     }
@@ -266,6 +297,33 @@ struct ControlsPanel: View {
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(Theme.textDim)
         }
+    }
+
+    /// One canvas at a time; switching it while on moves the camera over without stopping.
+    private var virtualCamSection: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "web.camera")
+                .foregroundStyle(engine.virtualCamActive ? Theme.camera : Theme.textDim)
+            Text("Virtual Camera").font(.system(size: 12))
+            Spacer(minLength: 4)
+            Picker("Canvas", selection: $engine.virtualCamCanvas) {
+                Text("16:9").tag(Canvas.horizontal)
+                Text("9:16").tag(Canvas.vertical)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize()
+            .help("Which canvas apps like Zoom or Discord see. 9:16 is shown with side bars, since the camera is 16:9.")
+            Toggle("", isOn: Binding(get: { engine.virtualCamActive }, set: { _ in engine.toggleVirtualCam() }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .help(engine.virtualCamAvailable
+                      ? "Shows up as \"OBS Virtual Camera\" in other apps"
+                      : "OBS Virtual Camera isn't installed: open OBS once and click Start Virtual Camera")
+        }
+        .disabled(!engine.running)
     }
 
     private var recordTitle: String {

@@ -31,6 +31,26 @@ It runs on libobs, the OBS engine, taken from the installed `/Applications/OBS.a
 Measured on the M4 MacBook Air, recording both canvases at once for 30 s:
 1800/1800 frames, every frame exactly 16.7 ms apart, 0 encoder drops.
 
+## Virtual camera
+
+Controls → Virtual Camera sends one canvas, 16:9 **or** 9:16, to the
+"OBS Virtual Camera" device, so Zoom, Discord, FaceTime or a browser can use it.
+Flip the 16:9 / 9:16 switch while it's on to move the camera to the other canvas.
+The device is fixed at 1920×1080, so 9:16 appears centred with black side bars.
+
+It uses the camera extension OBS.app installs (open OBS once and click Start
+Virtual Camera if it isn't installed yet). OmniCast feeds the extension directly,
+because OBS's own plugin only works inside OBS.app and only sends the main canvas.
+The Camera source skips virtual cameras so the feed can't loop back into itself;
+pick the camera under Sources → Camera.
+
+9:16 is fitted into the 1920×1080 camera frame on the GPU (a small extra canvas),
+so the camera never makes the vertical canvas, or a recording of it, skip frames.
+Measured: 60 fps into the camera, 0 skipped frames on either canvas.
+
+Screen Recording permission is requested once; after that, use "Allow screen
+access…" under Display.
+
 To check frame pacing yourself:
 
 ```sh

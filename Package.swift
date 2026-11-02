@@ -22,6 +22,9 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreMedia"),
+                .linkedFramework("CoreMediaIO"),
+                .linkedFramework("CoreVideo"),
             ]
         ),
         .executableTarget(

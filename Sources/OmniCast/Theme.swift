@@ -12,6 +12,7 @@ enum Theme {
 
     static let record = Color(red: 0.95, green: 0.23, blue: 0.21)
     static let live = Color(red: 0.93, green: 0.27, blue: 0.55)
+    static let camera = Color(red: 0.36, green: 0.62, blue: 1.0)
     static let good = Color(red: 0.30, green: 0.80, blue: 0.47)
     static let warn = Color(red: 0.98, green: 0.76, blue: 0.25)
 }

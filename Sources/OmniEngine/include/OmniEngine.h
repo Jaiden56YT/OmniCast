@@ -77,6 +77,10 @@ void omni_preview_detach(omni_canvas canvas);
 /* Default source toggles: "Display", "Camera", "Desktop Audio", "Mic". */
 void omni_source_set_enabled(const char *name, bool enabled);
 
+/* Camera source device, by AVCaptureDevice uniqueID. */
+void omni_camera_set_device(const char *unique_id);
+const char *omni_camera_device(void);
+
 void omni_set_status_callback(omni_status_callback cb, void *ctx);
 
 /* Starts one RTMP output per destination. index in the status callback matches
@@ -139,6 +143,19 @@ const char *omni_record_path(omni_canvas canvas);
 uint64_t omni_record_bytes(omni_canvas canvas);
 /* True when a hardware encoder exists for the codec. */
 bool omni_codec_available(omni_codec codec);
+
+/* ------------------------------------------------------------------------- */
+/* Virtual camera
+ *
+ * Feeds one canvas, either one, to the "OBS Virtual Camera" device that OBS.app
+ * installs, so Zoom, Discord, FaceTime etc. can pick it as a camera. The device is
+ * fixed at 1920x1080, so the vertical canvas is centred with black side bars. */
+
+/* True when the OBS camera extension is installed and its device is visible. */
+bool omni_virtualcam_available(void);
+bool omni_virtualcam_start(omni_canvas canvas, char *err, size_t err_len);
+void omni_virtualcam_stop(void);
+bool omni_virtualcam_active(void);
 
 #ifdef __cplusplus
 }

@@ -1,10 +1,14 @@
 #import <AVFoundation/AVFoundation.h>
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreMedia/CoreMedia.h>
+#import <CoreMediaIO/CMIOHardware.h>
+#import <CoreVideo/CoreVideo.h>
 
 #include "OmniEngine.h"
 
 #include <obs.h>
+#include <util/platform.h>
 
 #include <math.h>
 #include <stdatomic.h>
@@ -90,6 +94,8 @@ static void set_err(char *err, size_t err_len, const char *msg)
 
 /* ------------------------------------------------------------------------- */
 /* Startup */
+
+static void register_vcam_output(void);
 
 static NSString *frameworks_path(void)
 {
@@ -224,6 +230,54 @@ static NSString *main_display_uuid(void)
 	return str;
 }
 
+/* The system default can be a virtual camera (OBS's, Streamlabs'), which would
+ * feed OmniCast's own virtual camera back into the scene. Without a default the
+ * built-in camera wins over external devices, which may be capture cards; the
+ * app's camera picker overrides this. */
+static AVCaptureDevice *pick_camera(void)
+{
+	AVCaptureDevice *def = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+	if (def && ![def.localizedName.lowercaseString containsString:@"virtual"])
+		return def;
+	NSArray *types = @[
+		AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeContinuityCamera,
+		AVCaptureDeviceTypeExternal
+	];
+	AVCaptureDeviceDiscoverySession *session =
+		[AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:types
+								      mediaType:AVMediaTypeVideo
+								       position:AVCaptureDevicePositionUnspecified];
+	for (AVCaptureDeviceType type in types) {
+		for (AVCaptureDevice *d in session.devices) {
+			if (d.deviceType == type && ![d.localizedName.lowercaseString containsString:@"virtual"])
+				return d;
+		}
+	}
+	return nil;
+}
+
+void omni_camera_set_device(const char *unique_id)
+{
+	if (!engine.camera || !unique_id || !*unique_id)
+		return;
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "device", unique_id);
+	obs_source_update(engine.camera, s);
+	obs_data_release(s);
+}
+
+const char *omni_camera_device(void)
+{
+	static char current[256];
+	current[0] = 0;
+	if (!engine.camera)
+		return current;
+	obs_data_t *s = obs_source_get_settings(engine.camera);
+	snprintf(current, sizeof(current), "%s", obs_data_get_string(s, "device"));
+	obs_data_release(s);
+	return current;
+}
+
 static void create_sources(void)
 {
 	obs_data_t *s = obs_data_create();
@@ -234,7 +288,7 @@ static void create_sources(void)
 	obs_data_release(s);
 
 	s = obs_data_create();
-	AVCaptureDevice *cam = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+	AVCaptureDevice *cam = pick_camera();
 	if (cam)
 		obs_data_set_string(s, "device", cam.uniqueID.UTF8String);
 	obs_data_set_bool(s, "use_preset", true);
@@ -315,6 +369,11 @@ static void destroy_meters(void)
 void omni_audio_levels(omni_audio_source src, float *left_db, float *right_db)
 {
 	struct meter_ctx *m = &engine.meters[src == OMNI_AUDIO_MIC];
+	if (!m->meter) {
+		/* Before the engine starts the levels are zero-filled, which reads as 0 dBFS. */
+		*left_db = *right_db = -INFINITY;
+		return;
+	}
 	*left_db = atomic_load_explicit(&m->left, memory_order_relaxed);
 	*right_db = atomic_load_explicit(&m->right, memory_order_relaxed);
 }
@@ -400,6 +459,7 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 	obs_load_all_modules();
 	obs_log_loaded_modules();
 	obs_post_load_modules();
+	register_vcam_output();
 
 	struct obs_video_info vovi;
 	fill_video_info(&vovi, NULL, &engine.vertical, engine.vertical.fps);
@@ -454,6 +514,7 @@ static void release_record_slots(void);
 
 void omni_engine_shutdown(void)
 {
+	omni_virtualcam_stop();
 	omni_stream_stop();
 	/* Give the recordings a moment to write their final index. */
 	omni_record_stop();
@@ -477,15 +538,21 @@ void omni_engine_shutdown(void)
 		obs_canvas_remove(engine.vertical_canvas);
 		obs_canvas_release(engine.vertical_canvas);
 	}
+	/* The canvases hold their own reference to each scene, so releasing ours
+	 * isn't enough: the 16:9 scene would only die inside obs_shutdown, on a task
+	 * thread, after its sources were freed (crash in obs_sceneitem_release on
+	 * quit). Removing the scenes drops the canvas references now, and waiting on
+	 * the destroy queue lets them finish before shutdown. */
+	if (engine.scene_h)
+		obs_source_remove(obs_scene_get_source(engine.scene_h));
+	if (engine.scene_v)
+		obs_source_remove(obs_scene_get_source(engine.scene_v));
 	obs_scene_release(engine.scene_h);
 	obs_scene_release(engine.scene_v);
 	obs_source_release(engine.display);
 	obs_source_release(engine.camera);
 	obs_source_release(engine.desktop_audio);
 	obs_source_release(engine.mic);
-
-	/* Scenes are destroyed on a libobs task thread; shutting down before that
-	 * finishes crashed in obs_sceneitem_release on quit. */
 	obs_wait_for_destroy_queue();
 	memset(&engine, 0, sizeof(engine));
 	obs_shutdown();
@@ -949,4 +1016,400 @@ uint64_t omni_record_bytes(omni_canvas canvas)
 	if (!bytes && slot->path[0] && stat(slot->path, &st) == 0)
 		bytes = (uint64_t)st.st_size;
 	return bytes;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Virtual camera
+ *
+ * OBS's own mac-virtualcam output can't be used here: it only activates the
+ * camera extension from inside OBS.app and always sends the main canvas. The
+ * extension's sink stream takes frames from any app, so this feeds it directly,
+ * the same way that plugin does: NV12 CVPixelBuffers into the CMIO sink queue. */
+
+#define VCAM_WIDTH 1920
+#define VCAM_HEIGHT 1080
+
+static struct {
+	bool active;
+	omni_canvas canvas;
+	obs_output_t *output;
+	CMIOObjectID device;
+	CMIOStreamID stream;
+	CMSimpleQueueRef queue;
+	CVPixelBufferPoolRef pool;
+	CMVideoFormatDescriptionRef format;
+	/* Set when the chosen canvas isn't 1920x1080 (the vertical one): a 1920x1080
+	 * canvas whose scene holds that canvas's scene, centred with black bars. */
+	obs_canvas_t *fit_canvas;
+	obs_scene_t *fit_scene;
+	uint32_t fps;
+	uint32_t frame_width; /* size of the frames libobs hands over */
+	uint32_t frame_height;
+	/* Logged every 10 s so a camera that shows nothing says why. */
+	uint64_t frames, sent, queue_full, failed;
+	uint64_t work_ns, work_max_ns; /* time spent per frame in vcam_frame */
+} vcam;
+
+static bool cmio_get(CMIOObjectID obj, CMIOObjectPropertySelector sel, void *data, UInt32 size, UInt32 *used)
+{
+	CMIOObjectPropertyAddress addr = {sel, kCMIOObjectPropertyScopeGlobal, kCMIOObjectPropertyElementMain};
+	return CMIOObjectGetPropertyData(obj, &addr, 0, NULL, size, used, data) == kCMIOHardwareNoError;
+}
+
+static UInt32 cmio_size(CMIOObjectID obj, CMIOObjectPropertySelector sel)
+{
+	CMIOObjectPropertyAddress addr = {sel, kCMIOObjectPropertyScopeGlobal, kCMIOObjectPropertyElementMain};
+	UInt32 size = 0;
+	CMIOObjectGetPropertyDataSize(obj, &addr, 0, NULL, &size);
+	return size;
+}
+
+/* The device UID comes from the OBS plugin's Info.plist (it matches the
+ * extension's); the device name is the fallback. */
+static CMIOObjectID find_vcam_device(bool log_missing)
+{
+	NSString *plugin = [[[NSBundle mainBundle] builtInPlugInsPath]
+		stringByAppendingPathComponent:@"mac-virtualcam.plugin"];
+	NSString *uid = [[NSBundle bundleWithPath:plugin] objectForInfoDictionaryKey:@"OBSCameraDeviceUUID"];
+
+	UInt32 size = cmio_size(kCMIOObjectSystemObject, kCMIOHardwarePropertyDevices);
+	UInt32 count = size / sizeof(CMIOObjectID);
+	if (!count)
+		return kCMIOObjectUnknown;
+	CMIOObjectID *ids = calloc(count, sizeof(CMIOObjectID));
+	UInt32 used = 0;
+	CMIOObjectID found = kCMIOObjectUnknown;
+	if (cmio_get(kCMIOObjectSystemObject, kCMIOHardwarePropertyDevices, ids, size, &used)) {
+		count = used / sizeof(CMIOObjectID);
+		for (UInt32 i = 0; i < count && found == kCMIOObjectUnknown; i++) {
+			CFStringRef value = NULL;
+			if (uid && cmio_get(ids[i], kCMIODevicePropertyDeviceUID, &value, sizeof(value), &used) && value) {
+				if ([(__bridge NSString *)value isEqualToString:uid])
+					found = ids[i];
+				CFRelease(value);
+				value = NULL;
+			}
+			if (found == kCMIOObjectUnknown &&
+			    cmio_get(ids[i], kCMIOObjectPropertyName, &value, sizeof(value), &used) && value) {
+				if ([(__bridge NSString *)value isEqualToString:@"OBS Virtual Camera"])
+					found = ids[i];
+				else if (log_missing)
+					blog(LOG_INFO, "[OmniCast] Camera device seen: %s", [(__bridge NSString *)value UTF8String]);
+				CFRelease(value);
+			}
+		}
+	}
+	free(ids);
+	if (found == kCMIOObjectUnknown && log_missing)
+		blog(LOG_INFO, "[OmniCast] OBS Virtual Camera not among %u camera devices", count);
+	return found;
+}
+
+bool omni_virtualcam_available(void)
+{
+	return vcam.active || find_vcam_device(false) != kCMIOObjectUnknown;
+}
+
+bool omni_virtualcam_active(void)
+{
+	return vcam.active;
+}
+
+static void queue_altered(CMIOStreamID stream, void *token, void *refcon)
+{
+	UNUSED_PARAMETER(stream);
+	UNUSED_PARAMETER(token);
+	UNUSED_PARAMETER(refcon);
+}
+
+static void copy_plane(uint8_t *dst, size_t dst_stride, const uint8_t *src, size_t src_stride, size_t row_bytes,
+		       size_t rows)
+{
+	if (dst_stride == src_stride) {
+		memcpy(dst, src, src_stride * rows);
+		return;
+	}
+	for (size_t y = 0; y < rows; y++)
+		memcpy(dst + y * dst_stride, src + y * src_stride, row_bytes);
+}
+
+/* NV12: plane 0 is luma, plane 1 interleaved chroma at half height (same byte width). */
+static void copy_frame(CVPixelBufferRef pb, const struct video_data *frame)
+{
+	CVPixelBufferLockBaseAddress(pb, 0);
+	copy_plane(CVPixelBufferGetBaseAddressOfPlane(pb, 0), CVPixelBufferGetBytesPerRowOfPlane(pb, 0), frame->data[0],
+		   frame->linesize[0], vcam.frame_width, vcam.frame_height);
+	copy_plane(CVPixelBufferGetBaseAddressOfPlane(pb, 1), CVPixelBufferGetBytesPerRowOfPlane(pb, 1), frame->data[1],
+		   frame->linesize[1], vcam.frame_width, vcam.frame_height / 2);
+	CVPixelBufferUnlockBaseAddress(pb, 0);
+}
+
+static void vcam_send(struct video_data *frame);
+
+/* Runs on the libobs video thread for every frame of the chosen canvas. */
+static void vcam_frame(void *param, struct video_data *frame)
+{
+	UNUSED_PARAMETER(param);
+	if (++vcam.frames % (10 * vcam.fps) == 0) {
+		video_t *v = vcam.canvas == OMNI_CANVAS_VERTICAL ? obs_canvas_get_video(engine.vertical_canvas)
+								  : obs_get_video();
+		/* Skips on the chosen canvas are what would show up in a recording of it. */
+		blog(LOG_INFO,
+		     "[OmniCast] Virtual camera: %llu frames, %llu sent, %llu dropped (queue full), %llu failed, "
+		     "work avg %.2f ms max %.2f ms, canvas skipped %u",
+		     vcam.frames, vcam.sent, vcam.queue_full, vcam.failed,
+		     (double)vcam.work_ns / (double)vcam.frames / 1e6, (double)vcam.work_max_ns / 1e6,
+		     video_output_get_skipped_frames(v));
+		vcam.work_max_ns = 0;
+	}
+	uint64_t t0 = os_gettime_ns();
+	vcam_send(frame);
+	uint64_t dt = os_gettime_ns() - t0;
+	vcam.work_ns += dt;
+	if (dt > vcam.work_max_ns)
+		vcam.work_max_ns = dt;
+}
+
+static void vcam_send(struct video_data *frame)
+{
+
+	/* Drop rather than queue up when the camera's consumer is slow. */
+	if (CMSimpleQueueGetCount(vcam.queue) >= CMSimpleQueueGetCapacity(vcam.queue)) {
+		vcam.queue_full++;
+		return;
+	}
+
+	CVPixelBufferRef pb = NULL;
+	if (CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, vcam.pool, &pb) != kCVReturnSuccess) {
+		vcam.failed++;
+		return;
+	}
+
+	copy_frame(pb, frame);
+
+	CMSampleTimingInfo timing = {
+		.duration = CMTimeMake(1, (int32_t)vcam.fps),
+		.presentationTimeStamp = CMTimeMake((int64_t)frame->timestamp, 1000000000),
+		.decodeTimeStamp = kCMTimeInvalid,
+	};
+	CMSampleBufferRef sample = NULL;
+	OSStatus st = CMSampleBufferCreateForImageBuffer(kCFAllocatorDefault, pb, true, NULL, NULL, vcam.format,
+							 &timing, &sample);
+	CVPixelBufferRelease(pb);
+	if (st != noErr || !sample) {
+		if (vcam.failed++ == 0)
+			blog(LOG_WARNING, "[OmniCast] Virtual camera: CMSampleBufferCreateForImageBuffer failed (%d)", (int)st);
+		return;
+	}
+	/* The queue takes ownership of the sample on success. */
+	if (CMSimpleQueueEnqueue(vcam.queue, sample) == noErr) {
+		vcam.sent++;
+	} else {
+		CFRelease(sample);
+		vcam.failed++;
+	}
+}
+
+/* A minimal raw-video output. Going through an output (rather than connecting
+ * to the canvas's video_t directly) is what makes libobs download frames from
+ * the GPU at all: it raises the canvas's raw_active count, which a bare
+ * video_output_connect doesn't, so the callback never ran. */
+static const char *vcam_output_name(void *type_data)
+{
+	UNUSED_PARAMETER(type_data);
+	return "OmniCast Virtual Camera";
+}
+
+static void *vcam_output_create(obs_data_t *settings, obs_output_t *output)
+{
+	UNUSED_PARAMETER(settings);
+	return output;
+}
+
+static void vcam_output_destroy(void *data)
+{
+	UNUSED_PARAMETER(data);
+}
+
+static bool vcam_output_start(void *data)
+{
+	obs_output_t *output = data;
+	return obs_output_can_begin_data_capture(output, 0) && obs_output_begin_data_capture(output, 0);
+}
+
+static void vcam_output_stop(void *data, uint64_t ts)
+{
+	UNUSED_PARAMETER(ts);
+	obs_output_end_data_capture(data);
+}
+
+static void vcam_output_raw_video(void *data, struct video_data *frame)
+{
+	UNUSED_PARAMETER(data);
+	vcam_frame(NULL, frame);
+}
+
+static struct obs_output_info vcam_output_info = {
+	.id = "omnicast_virtualcam",
+	.flags = OBS_OUTPUT_VIDEO,
+	.get_name = vcam_output_name,
+	.create = vcam_output_create,
+	.destroy = vcam_output_destroy,
+	.start = vcam_output_start,
+	.stop = vcam_output_stop,
+	.raw_video = vcam_output_raw_video,
+};
+
+static void register_vcam_output(void)
+{
+	obs_register_output(&vcam_output_info);
+}
+
+static void vcam_release(void)
+{
+	if (vcam.device && vcam.stream)
+		CMIODeviceStopStream(vcam.device, vcam.stream);
+	if (vcam.queue)
+		CFRelease(vcam.queue);
+	if (vcam.pool)
+		CVPixelBufferPoolRelease(vcam.pool);
+	if (vcam.format)
+		CFRelease(vcam.format);
+	if (vcam.fit_canvas) {
+		obs_canvas_set_channel(vcam.fit_canvas, 0, NULL);
+		if (vcam.fit_scene)
+			obs_source_remove(obs_scene_get_source(vcam.fit_scene));
+		obs_scene_release(vcam.fit_scene);
+		obs_canvas_remove(vcam.fit_canvas);
+		obs_canvas_release(vcam.fit_canvas);
+	}
+	memset(&vcam, 0, sizeof(vcam));
+}
+
+bool omni_virtualcam_start(omni_canvas canvas, char *err, size_t err_len)
+{
+	if (!engine.running) {
+		set_err(err, err_len, "Engine is not running");
+		return false;
+	}
+	omni_virtualcam_stop();
+
+	vcam.device = find_vcam_device(true);
+	if (vcam.device == kCMIOObjectUnknown) {
+		set_err(err, err_len,
+			"OBS Virtual Camera isn't installed. Open OBS once and click Start Virtual Camera to install it.");
+		return false;
+	}
+
+	/* The extension publishes a source stream (what apps read) and then a sink
+	 * stream (what we write). */
+	UInt32 size = cmio_size(vcam.device, kCMIODevicePropertyStreams);
+	CMIOStreamID streams[4] = {0};
+	UInt32 used = 0;
+	if (size < 2 * sizeof(CMIOStreamID) ||
+	    !cmio_get(vcam.device, kCMIODevicePropertyStreams, streams, sizeof(streams), &used) ||
+	    used < 2 * sizeof(CMIOStreamID)) {
+		set_err(err, err_len, "OBS Virtual Camera didn't start. Restarting the Mac usually fixes this.");
+		vcam_release();
+		return false;
+	}
+	vcam.stream = streams[1];
+
+	if (CMIOStreamCopyBufferQueue(vcam.stream, queue_altered, NULL, &vcam.queue) != kCMIOHardwareNoError ||
+	    !vcam.queue) {
+		set_err(err, err_len, "Couldn't connect to OBS Virtual Camera");
+		vcam_release();
+		return false;
+	}
+
+	NSDictionary *attrs = @{
+		(id)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange),
+		(id)kCVPixelBufferWidthKey: @(VCAM_WIDTH),
+		(id)kCVPixelBufferHeightKey: @(VCAM_HEIGHT),
+		(id)kCVPixelBufferIOSurfacePropertiesKey: @{},
+	};
+	/* A bare description, as OBS's plugin uses. One built from a buffer carries
+	 * that buffer's attachments, and every later buffer without them then fails
+	 * CMSampleBufferCreateForImageBuffer, so no frame ever reached the camera. */
+	if (CVPixelBufferPoolCreate(kCFAllocatorDefault, NULL, (__bridge CFDictionaryRef)attrs, &vcam.pool) !=
+		    kCVReturnSuccess ||
+	    CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+					   VCAM_WIDTH, VCAM_HEIGHT, NULL, &vcam.format) != noErr) {
+		set_err(err, err_len, "Couldn't allocate virtual camera frames");
+		vcam_release();
+		return false;
+	}
+
+	if (CMIODeviceStartStream(vcam.device, vcam.stream) != kCMIOHardwareNoError) {
+		set_err(err, err_len, "OBS Virtual Camera didn't start");
+		vcam.stream = 0; /* nothing to stop */
+		vcam_release();
+		return false;
+	}
+
+	/* A 1920x1080 canvas is copied straight in. Any other size (the vertical
+	 * canvas) is fitted on the GPU: a 1920x1080 canvas renders that canvas's
+	 * scene centred with black bars, so each frame is again a plain copy.
+	 * Scaling on the CPU (libobs) or with VideoToolbox's pixel transfer ran
+	 * 5-7 ms a frame with stalls of over a second on the canvas's video thread,
+	 * which made the canvas skip frames, recordings included. */
+	bool vertical = canvas == OMNI_CANVAS_VERTICAL;
+	const omni_canvas_config *cfg = vertical ? &engine.vertical : &engine.horizontal;
+	vcam.canvas = canvas;
+	vcam.fps = cfg->fps ? cfg->fps : 60;
+	vcam.frame_width = VCAM_WIDTH;
+	vcam.frame_height = VCAM_HEIGHT;
+	video_t *video = vertical ? obs_canvas_get_video(engine.vertical_canvas) : obs_get_video();
+	if (cfg->width != VCAM_WIDTH || cfg->height != VCAM_HEIGHT) {
+		omni_canvas_config fit = {VCAM_WIDTH, VCAM_HEIGHT, vcam.fps, 0};
+		struct obs_video_info ovi;
+		fill_video_info(&ovi, NULL, &fit, vcam.fps);
+		vcam.fit_canvas = obs_canvas_create("Virtual Camera", &ovi, ACTIVATE | SCENE_REF | EPHEMERAL);
+		if (!vcam.fit_canvas || !obs_canvas_has_video(vcam.fit_canvas)) {
+			set_err(err, err_len, "Couldn't set up the virtual camera canvas");
+			vcam_release();
+			return false;
+		}
+		vcam.fit_scene = obs_canvas_scene_create(vcam.fit_canvas, "Virtual Camera");
+		place(vcam.fit_scene, obs_scene_get_source(vertical ? engine.scene_v : engine.scene_h), 0, 0, VCAM_WIDTH,
+		      VCAM_HEIGHT, OBS_BOUNDS_SCALE_INNER, false);
+		obs_canvas_set_channel(vcam.fit_canvas, 0, obs_scene_get_source(vcam.fit_scene));
+		video = obs_canvas_get_video(vcam.fit_canvas);
+	}
+
+	struct video_scale_info conv = {
+		.format = VIDEO_FORMAT_NV12,
+		.width = vcam.frame_width,
+		.height = vcam.frame_height,
+		.range = VIDEO_RANGE_PARTIAL,
+		.colorspace = VIDEO_CS_709,
+	};
+	vcam.output = obs_output_create("omnicast_virtualcam", "Virtual Camera", NULL, NULL);
+	if (vcam.output) {
+		obs_output_set_media(vcam.output, video, obs_get_audio());
+		obs_output_set_video_conversion(vcam.output, &conv);
+	}
+	if (!vcam.output || !obs_output_start(vcam.output)) {
+		set_err(err, err_len, "Couldn't read frames from the canvas");
+		obs_output_release(vcam.output);
+		vcam.output = NULL;
+		vcam_release();
+		return false;
+	}
+	vcam.active = true;
+	blog(LOG_INFO, "[OmniCast] Virtual camera started (%s canvas, %ux%u, %s)", vertical ? "vertical" : "horizontal",
+	     cfg->width, cfg->height, vcam.fit_canvas ? "fitted into 1920x1080 on the GPU" : "copied as is");
+	return true;
+}
+
+void omni_virtualcam_stop(void)
+{
+	if (vcam.output) {
+		obs_output_stop(vcam.output);
+		/* Destroying the output waits for its capture to end, so no frame
+		 * callback is running when the buffers below are freed. */
+		obs_output_release(vcam.output);
+		vcam.output = NULL;
+	}
+	vcam_release();
 }

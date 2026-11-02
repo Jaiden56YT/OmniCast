@@ -78,6 +78,18 @@ final class Engine {
     private var missedBaseline = (render: UInt32(0), encode: UInt32(0))
     private var openRecordings: Set<Canvas> = []
 
+    /// Which canvas feeds the virtual camera. Only one at a time: the camera is a single device.
+    var virtualCamCanvas: Canvas = Canvas(rawValue: UserDefaults.standard.string(forKey: "virtualCamCanvas") ?? "")
+        ?? .horizontal {
+        didSet {
+            UserDefaults.standard.set(virtualCamCanvas.rawValue, forKey: "virtualCamCanvas")
+            if virtualCamActive, oldValue != virtualCamCanvas { startVirtualCam() }
+        }
+    }
+    private(set) var virtualCamActive = false
+    private(set) var virtualCamAvailable = false
+    private(set) var virtualCamError: String?
+
     /// Keeps App Nap and timer coalescing away from the render and encode threads
     /// for the app's whole life; frame pacing depends on precise wakeups.
     private var latencyActivity: NSObjectProtocol?
@@ -108,8 +120,13 @@ final class Engine {
             }
             return
         }
-        // Screen capture can't be asked for inline; this opens the system prompt once.
-        if !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
+        // macOS re-shows this prompt on every call, so only ask on the very first
+        // launch; after that the Display source offers a link (requestScreenAccess).
+        if !CGPreflightScreenCaptureAccess(), !UserDefaults.standard.bool(forKey: "askedScreenAccess") {
+            UserDefaults.standard.set(true, forKey: "askedScreenAccess")
+            CGRequestScreenCaptureAccess()
+        }
+        screenAccess = CGPreflightScreenCaptureAccess()
         start()
     }
 
@@ -155,6 +172,7 @@ final class Engine {
             MainActor.assumeIsolated { Engine.shared.refreshStats() }
         }
         refreshStats()
+        virtualCamAvailable = omni_virtualcam_available()
     }
 
     func shutdown() {
@@ -300,7 +318,55 @@ final class Engine {
             + (canvases.contains(.vertical) ? stats.skipped_frames_v : 0)
     }
 
+    // MARK: Virtual camera
+
+    func toggleVirtualCam() {
+        virtualCamActive ? stopVirtualCam() : startVirtualCam()
+    }
+
+    /// Starts the camera on `virtualCamCanvas`, or switches it there if it's already on.
+    func startVirtualCam() {
+        guard running else { return }
+        var err = [CChar](repeating: 0, count: 512)
+        let canvas = virtualCamCanvas == .vertical ? OMNI_CANVAS_VERTICAL : OMNI_CANVAS_HORIZONTAL
+        virtualCamActive = omni_virtualcam_start(canvas, &err, err.count)
+        virtualCamError = virtualCamActive ? nil : String(cString: err)
+        virtualCamAvailable = omni_virtualcam_available()
+        updateSessionActivity()
+    }
+
+    func stopVirtualCam() {
+        omni_virtualcam_stop()
+        virtualCamActive = false
+        updateSessionActivity()
+    }
+
     // MARK: Sources and audio
+
+    /// Real cameras only: virtual ones (OBS, Streamlabs) would loop OmniCast's own feed back in.
+    var cameraDevices: [AVCaptureDevice] {
+        AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInWideAngleCamera, .continuityCamera, .external],
+            mediaType: .video, position: .unspecified
+        ).devices.filter { !$0.localizedName.lowercased().contains("virtual") }
+    }
+
+    private(set) var cameraDevice = ""
+    /// Whether macOS lets OmniCast capture the screen; it only changes after a relaunch.
+    private(set) var screenAccess = true
+
+    func requestScreenAccess() {
+        CGRequestScreenCaptureAccess()
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func setCamera(_ uniqueID: String) {
+        UserDefaults.standard.set(uniqueID, forKey: "cameraDevice")
+        omni_camera_set_device(uniqueID)
+        cameraDevice = uniqueID
+    }
 
     func setSource(_ name: String, enabled: Bool) {
         omni_source_set_enabled(name, enabled)
@@ -338,6 +404,11 @@ final class Engine {
             setVolume(channel, fader: fader(channel))
             setMuted(channel, isMuted(channel))
         }
+        if let saved = UserDefaults.standard.string(forKey: "cameraDevice"),
+           cameraDevices.contains(where: { $0.uniqueID == saved }) {
+            omni_camera_set_device(saved)
+        }
+        cameraDevice = String(cString: omni_camera_device())
         for name in ["Display", "Camera"] where UserDefaults.standard.object(forKey: "source.\(name)") != nil {
             setSource(name, enabled: UserDefaults.standard.bool(forKey: "source.\(name)"))
         }
@@ -346,11 +417,11 @@ final class Engine {
     // MARK: Health
 
     private func updateSessionActivity() {
-        let busy = live || recordState != .idle
+        let busy = live || recordState != .idle || virtualCamActive
         if busy, sessionActivity == nil {
             sessionActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled, .suddenTerminationDisabled, .automaticTerminationDisabled],
-                reason: "Recording or streaming")
+                reason: "Recording, streaming or virtual camera")
         } else if !busy, let activity = sessionActivity {
             ProcessInfo.processInfo.endActivity(activity)
             sessionActivity = nil
@@ -359,6 +430,9 @@ final class Engine {
 
     private func refreshStats() {
         omni_get_stats(&stats)
+        // The extension's device can show up in this process a moment after camera
+        // access is granted, so keep looking until it does.
+        if !virtualCamAvailable { virtualCamAvailable = omni_virtualcam_available() }
         thermal = ProcessInfo.processInfo.thermalState
         let folder = URL(fileURLWithPath: recordSettings.folder)
         let probe = FileManager.default.fileExists(atPath: folder.path) ? folder : folder.deletingLastPathComponent()
