@@ -99,11 +99,12 @@ It writes `benchmark.json` (fps, render time, missed frames) next to the recordi
 open build/OmniCast.app
 ```
 
-Create a code-signing certificate named **OmniCast Local** once (Keychain Access →
-Certificate Assistant → Create a Certificate…, Identity Type *Self Signed Root*,
-Certificate Type *Code Signing*). `bundle.sh` signs with it, so macOS keeps the
-Screen Recording / Camera / Mic permissions across rebuilds. Without it the app is
-signed ad hoc and macOS asks again after every build.
+Run `./scripts/make-signing-cert.sh` once. It creates a self-signed code-signing
+certificate named **OmniCast Local** in your login keychain, and `bundle.sh` signs
+with it, so macOS keeps the Screen Recording / Camera / Mic permissions across
+rebuilds. Without it the app is signed ad hoc and macOS asks again after every
+build (and a Screen Recording switch left on from an older build doesn't cover
+the new one: remove OmniCast from the list and allow it again).
 
 OBS.app must stay installed: `OmniCast.app/Contents/Frameworks` and `PlugIns` link to it.
 
