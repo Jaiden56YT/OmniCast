@@ -169,6 +169,7 @@ struct SourcesPanel: View {
                 SourceRow(name: "Camera", icon: "video", isOn: $camera)
                 CameraPicker()
                 CallSourceRow()
+                SpotifySourceRow()
                 Spacer(minLength: 8)
                 Theme.hairline.frame(height: 1)
                 Toggle(isOn: $showPreview) {

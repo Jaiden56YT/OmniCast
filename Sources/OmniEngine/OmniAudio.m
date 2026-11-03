@@ -1055,6 +1055,31 @@ void omni_mixer_remove_app(int c)
 	obs_source_release(src);
 }
 
+int omni_audio_attach_source(obs_source_t *src)
+{
+	if (!src)
+		return -1;
+	for (int c = OMNI_CHANNEL_SYSTEM + 1; c < MAX_CH; c++) {
+		if (channels[c] == src)
+			return c;
+	}
+	for (int c = OMNI_CHANNEL_SYSTEM + 1; c < MAX_CH; c++) {
+		if (channels[c])
+			continue;
+		/* Not owned: omni_audio_stop detaches it, the caller releases it. */
+		attach_channel(c, src);
+		return c;
+	}
+	return -1;
+}
+
+void omni_audio_detach_source(int c)
+{
+	if (c <= OMNI_CHANNEL_SYSTEM || c >= MAX_CH || channel_owned[c])
+		return;
+	detach_channel(c);
+}
+
 void omni_mixer_levels(int c, float *left_db, float *right_db)
 {
 	*left_db = *right_db = -INFINITY;

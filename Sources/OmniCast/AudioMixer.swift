@@ -19,10 +19,21 @@ final class Mixer {
         var monitor = 1.0
         var monitorMuted = false
 
-        var isApp: Bool { id != "mic" && id != "system" }
+        var isApp: Bool { id != "mic" && id != "system" && id != Mixer.captureID }
     }
 
     static let pluginNames = ["STACKS", "Muze"]
+    /// The capture card's channel (the screen slot's capture device, e.g. a game).
+    nonisolated static let captureID = "capture"
+    nonisolated static let spotifyID = "com.spotify.client"
+
+    /// Shown only while the screen slot is a capture device.
+    private(set) var captureShown = false
+
+    /// Channels to show: the capture card's only while it's in use.
+    var visibleChannels: [Channel] {
+        channels.filter { $0.id != Self.captureID || (captureShown && indices[Self.captureID] != nil) }
+    }
 
     private(set) var channels: [Channel]
     /// Engine channel index per channel id, once the engine is running.
@@ -66,6 +77,7 @@ final class Mixer {
     /// Pushes the saved mixer into the engine once it has started.
     func apply() {
         indices = ["mic": Int32(OMNI_CHANNEL_MIC), "system": Int32(OMNI_CHANNEL_SYSTEM)]
+        addSpotifyOnce()
         for ch in channels where ch.isApp {
             let i = omni_mixer_add_app(ch.id)
             if i >= 0 { indices[ch.id] = i }
@@ -76,6 +88,40 @@ final class Mixer {
         for (p, on) in pluginsOn.enumerated() where on {
             omni_plugin_set_enabled(omni_plugin(rawValue: UInt32(p)), true)
         }
+    }
+
+    /// Spotify gets a channel by default, once: removing it afterwards sticks.
+    private func addSpotifyOnce() {
+        let key = "mixer.addedSpotify"
+        guard appsSupported, !UserDefaults.standard.bool(forKey: key),
+              NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.spotifyID) != nil else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        if !channels.contains(where: { $0.id == Self.spotifyID }) {
+            channels.append(Channel(id: Self.spotifyID, name: "Spotify"))
+            save()
+        }
+    }
+
+    /// Call when the screen slot changes. `deviceName` is the capture device's name,
+    /// or nil when the slot shows a display, window or app.
+    func captureDeviceChanged(_ deviceName: String?) {
+        let i = omni_mixer_capture_channel()
+        guard let deviceName, i >= 0 else {
+            // The engine freed the channel; its slot may go to an app next.
+            captureShown = false
+            indices.removeValue(forKey: Self.captureID)
+            return
+        }
+        indices[Self.captureID] = i
+        if let k = channels.firstIndex(where: { $0.id == Self.captureID }) {
+            channels[k].name = deviceName
+        } else {
+            // Monitor on from the start: the point is to hear the game.
+            channels.append(Channel(id: Self.captureID, name: deviceName))
+        }
+        captureShown = true
+        save()
+        if let ch = channels.first(where: { $0.id == Self.captureID }) { push(ch) }
     }
 
     func update(_ ch: Channel) {
@@ -154,10 +200,10 @@ struct AudioMixerPanel: View {
             }
         } content: {
             let rows = VStack(spacing: 12) {
-                ForEach(mixer.channels) { ChannelStrip(channel: $0) }
+                ForEach(mixer.visibleChannels) { ChannelStrip(channel: $0) }
             }
             // Four strips fit; more scroll, so the panel row doesn't grow over the preview.
-            if mixer.channels.count > 4 {
+            if mixer.visibleChannels.count > 4 {
                 ScrollView { rows.padding(.trailing, 8) }.frame(height: 4 * 74)
             } else {
                 rows

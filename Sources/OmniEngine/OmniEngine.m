@@ -57,10 +57,22 @@ static struct {
 	 * or app) or `capture_dev` (a capture card), never both; the other's scene
 	 * items are hidden and the source disabled so it doesn't render. */
 	obs_source_t *capture_dev;
+	/* A disabled capture source still holds its device open: the camera light
+	 * stays on, it keeps streaming frames over USB, and other apps see it busy.
+	 * So hidden or unused devices are pointed at no device instead, and these
+	 * remember what to reopen. */
+	char camera_id[256];
+	bool camera_on;
+	char capture_id[256];
+	bool capture_running;
 	obs_sceneitem_t *screen_items[2]; /* omni_canvas */
 	obs_sceneitem_t *device_items[2];
 	bool screen_on_device;
 	bool screen_visible;
+	/* Capture cards like the HD60 X show up as a video device plus a separate
+	 * audio input of the same name; that input becomes capture_audio. */
+	obs_source_t *capture_audio;
+	int capture_channel; /* mixer channel for the capture card's sound, or -1 */
 	obs_source_t *desktop_audio;
 	obs_source_t *mic;
 
@@ -257,26 +269,26 @@ static AVCaptureDevice *pick_camera(void)
 	return nil;
 }
 
+static void avcapture_open(obs_source_t *source, const char *unique_id)
+{
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "device", unique_id ? unique_id : "");
+	obs_source_update(source, s);
+	obs_data_release(s);
+}
+
 void omni_camera_set_device(const char *unique_id)
 {
 	if (!engine.camera || !unique_id || !*unique_id)
 		return;
-	obs_data_t *s = obs_data_create();
-	obs_data_set_string(s, "device", unique_id);
-	obs_source_update(engine.camera, s);
-	obs_data_release(s);
+	snprintf(engine.camera_id, sizeof(engine.camera_id), "%s", unique_id);
+	if (engine.camera_on)
+		avcapture_open(engine.camera, engine.camera_id);
 }
 
 const char *omni_camera_device(void)
 {
-	static char current[256];
-	current[0] = 0;
-	if (!engine.camera)
-		return current;
-	obs_data_t *s = obs_source_get_settings(engine.camera);
-	snprintf(current, sizeof(current), "%s", obs_data_get_string(s, "device"));
-	obs_data_release(s);
-	return current;
+	return engine.camera_id;
 }
 
 static void create_sources(void)
@@ -289,9 +301,14 @@ static void create_sources(void)
 	obs_data_release(s);
 
 	s = obs_data_create();
+	/* Created closed: the app applies the saved camera and opens it only if it's
+	 * shown (omni_source_set_enabled), so a hidden camera never lights up and the
+	 * default camera isn't grabbed when another one was chosen. */
 	AVCaptureDevice *cam = pick_camera();
 	if (cam)
-		obs_data_set_string(s, "device", cam.uniqueID.UTF8String);
+		snprintf(engine.camera_id, sizeof(engine.camera_id), "%s", cam.uniqueID.UTF8String);
+	obs_data_set_string(s, "device", "");
+	engine.camera_on = false;
 	obs_data_set_bool(s, "use_preset", true);
 	obs_data_set_string(s, "preset", AVCaptureSessionPreset1280x720.UTF8String);
 	engine.camera = obs_source_create("macos-avcapture", "Camera", s, NULL);
@@ -418,6 +435,7 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 
 	create_sources();
 	engine.screen_visible = true;
+	engine.capture_channel = -1;
 	omni_audio_start(config_dir, engine.mic, engine.desktop_audio);
 	build_scenes();
 
@@ -460,11 +478,14 @@ bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_can
 static void release_record_slots(void);
 
 static void overlay_clear(void);
+static void layers_clear(void);
+static void capture_audio_stop(void);
 
 void omni_engine_shutdown(void)
 {
 	omni_virtualcam_stop();
 	overlay_clear();
+	layers_clear();
 	omni_stream_stop();
 	/* Give the recordings a moment to write their final index. */
 	omni_record_stop();
@@ -480,6 +501,8 @@ void omni_engine_shutdown(void)
 	for (size_t t = 0; t < RECORD_AUDIO_TRACKS; t++)
 		obs_encoder_release(engine.aenc_rec[t]);
 	omni_audio_stop();
+	engine.capture_channel = -1; /* omni_audio_stop detached it */
+	capture_audio_stop();
 
 	for (uint32_t ch = 0; ch < 6; ch++)
 		obs_set_output_source(ch, NULL);
@@ -600,8 +623,82 @@ static void apply_screen(void)
 	}
 	if (engine.display)
 		obs_source_set_enabled(engine.display, engine.screen_visible && !dev);
-	if (engine.capture_dev)
-		obs_source_set_enabled(engine.capture_dev, engine.screen_visible && dev);
+	if (engine.capture_dev) {
+		bool run = engine.screen_visible && dev;
+		obs_source_set_enabled(engine.capture_dev, run);
+		if (run != engine.capture_running) {
+			avcapture_open(engine.capture_dev, run ? engine.capture_id : "");
+			engine.capture_running = run;
+		}
+	}
+}
+
+/* Output channel that carries capture_audio into the stream (it isn't in a scene). */
+#define CAPTURE_AUDIO_OUTPUT 7
+
+/* The audio input that belongs to a capture card's video device: same name. */
+static NSString *capture_audio_uid(const char *video_uid)
+{
+	AVCaptureDevice *video = [AVCaptureDevice deviceWithUniqueID:@(video_uid)];
+	if (!video)
+		return nil;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	NSArray<AVCaptureDevice *> *inputs = [AVCaptureDevice devicesWithMediaType:AVMediaTypeAudio];
+#pragma clang diagnostic pop
+	for (AVCaptureDevice *a in inputs) {
+		if ([a.localizedName isEqualToString:video.localizedName])
+			return a.uniqueID;
+	}
+	return nil;
+}
+
+static void capture_audio_stop(void)
+{
+	if (engine.capture_channel >= 0)
+		omni_audio_detach_source(engine.capture_channel);
+	engine.capture_channel = -1;
+	if (engine.capture_audio) {
+		obs_set_output_source(CAPTURE_AUDIO_OUTPUT, NULL);
+		obs_source_release(engine.capture_audio);
+		engine.capture_audio = NULL;
+	}
+}
+
+/* Gives the capture card's sound a mixer channel (stream + monitor). Uses the
+ * card's own audio input when there is one, else the video source's audio.
+ * Leaving the capture card stops it, so the game can't keep playing in the
+ * headphones without a channel showing. */
+static void capture_audio_start(const char *video_uid)
+{
+	NSString *uid = capture_audio_uid(video_uid);
+	obs_data_t *v = obs_data_create();
+	/* Take sound from one place only, or it would play twice. */
+	obs_data_set_bool(v, "enable_audio", uid == nil);
+	obs_source_update(engine.capture_dev, v);
+	obs_data_release(v);
+
+	if (!uid) {
+		capture_audio_stop();
+		engine.capture_channel = omni_audio_attach_source(engine.capture_dev);
+		return;
+	}
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "device_id", uid.UTF8String);
+	if (engine.capture_audio) {
+		obs_source_update(engine.capture_audio, s);
+	} else {
+		if (engine.capture_channel >= 0)
+			omni_audio_detach_source(engine.capture_channel);
+		engine.capture_audio = obs_source_create("coreaudio_input_capture", "Capture Audio", s, NULL);
+		if (engine.capture_audio) {
+			/* Stream mix and the recording's desktop-audio track. */
+			obs_source_set_audio_mixers(engine.capture_audio, (1 << 0) | (1 << 1));
+			obs_set_output_source(CAPTURE_AUDIO_OUTPUT, engine.capture_audio);
+			engine.capture_channel = omni_audio_attach_source(engine.capture_audio);
+		}
+	}
+	obs_data_release(s);
 }
 
 void omni_screen_set_target(omni_screen_kind kind, const char *id)
@@ -611,6 +708,8 @@ void omni_screen_set_target(omni_screen_kind kind, const char *id)
 
 	obs_data_t *s = obs_data_create();
 	if (kind == OMNI_SCREEN_DEVICE) {
+		snprintf(engine.capture_id, sizeof(engine.capture_id), "%s", id);
+		engine.capture_running = true;
 		obs_data_set_string(s, "device", id);
 		obs_data_set_bool(s, "use_preset", true);
 		obs_data_set_string(s, "preset", AVCaptureSessionPresetHigh.UTF8String);
@@ -620,6 +719,8 @@ void omni_screen_set_target(omni_screen_kind kind, const char *id)
 			obs_source_update(engine.capture_dev, s);
 		} else {
 			engine.capture_dev = obs_source_create("macos-avcapture", "Capture Device", s, NULL);
+			if (engine.capture_dev)
+				obs_source_set_audio_mixers(engine.capture_dev, (1 << 0) | (1 << 1));
 			for (int c = 0; c < 2; c++) {
 				engine.device_items[c] = place_screen((omni_canvas)c, engine.capture_dev);
 				/* Under the camera, like the screen it stands in for. */
@@ -628,6 +729,7 @@ void omni_screen_set_target(omni_screen_kind kind, const char *id)
 			}
 		}
 		engine.screen_on_device = engine.capture_dev != NULL;
+		capture_audio_start(id);
 	} else {
 		/* screen_capture's own type values: 0 display, 1 window, 2 application. */
 		obs_data_set_int(s, "type", kind);
@@ -641,9 +743,15 @@ void omni_screen_set_target(omni_screen_kind kind, const char *id)
 		}
 		obs_source_update(engine.display, s);
 		engine.screen_on_device = false;
+		capture_audio_stop();
 	}
 	obs_data_release(s);
 	apply_screen();
+}
+
+int omni_mixer_capture_channel(void)
+{
+	return engine.running ? engine.capture_channel : -1;
 }
 
 void omni_source_set_enabled(const char *name, bool enabled)
@@ -651,6 +759,12 @@ void omni_source_set_enabled(const char *name, bool enabled)
 	if (strcmp(name, "Display") == 0) {
 		engine.screen_visible = enabled;
 		apply_screen();
+		return;
+	}
+	if (strcmp(name, "Camera") == 0 && engine.camera) {
+		engine.camera_on = enabled;
+		obs_source_set_enabled(engine.camera, enabled);
+		avcapture_open(engine.camera, enabled ? engine.camera_id : "");
 		return;
 	}
 	obs_source_t *sources[] = {engine.camera, engine.desktop_audio, engine.mic};
@@ -1561,4 +1675,130 @@ static void overlay_clear(void)
 			overlay_free(&overlay.layers[i]);
 	}
 	overlay.hidden = false;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Image layers */
+
+#define MAX_LAYERS 8
+
+struct image_layer {
+	char key[64];
+	obs_source_t *image;
+	obs_source_t *fade; /* color filter; its opacity fades the layer */
+	obs_sceneitem_t *items[2]; /* omni_canvas */
+	bool placed[2];
+	float opacity;
+};
+
+static struct image_layer layers[MAX_LAYERS];
+
+static struct image_layer *layer_find(const char *key, bool create)
+{
+	struct image_layer *free_slot = NULL;
+	for (int i = 0; i < MAX_LAYERS; i++) {
+		if (layers[i].key[0] && strcmp(layers[i].key, key) == 0)
+			return &layers[i];
+		if (!layers[i].key[0] && !free_slot)
+			free_slot = &layers[i];
+	}
+	if (create && free_slot)
+		snprintf(free_slot->key, sizeof(free_slot->key), "%s", key);
+	return create ? free_slot : NULL;
+}
+
+/* A fully faded layer is hidden, so it costs nothing to render. */
+static void layer_apply_visibility(struct image_layer *l)
+{
+	for (int c = 0; c < 2; c++) {
+		if (l->items[c])
+			obs_sceneitem_set_visible(l->items[c], l->placed[c] && l->opacity > 0.001f);
+	}
+}
+
+void omni_layer_set_image(const char *key, const char *png)
+{
+	if (!engine.running || !key || !*key)
+		return;
+	struct image_layer *l = layer_find(key, true);
+	if (!l)
+		return;
+	obs_data_t *s = obs_data_create();
+	obs_data_set_string(s, "file", png);
+	if (l->image) {
+		obs_source_update(l->image, s);
+		obs_data_release(s);
+		return;
+	}
+	l->image = obs_source_create_private("image_source", key, s);
+	obs_data_release(s);
+	if (!l->image)
+		return;
+	l->fade = obs_source_create_private("color_filter_v2", "Fade", NULL);
+	if (!l->fade)
+		l->fade = obs_source_create_private("color_filter", "Fade", NULL);
+	if (l->fade)
+		obs_source_filter_add(l->image, l->fade);
+	obs_scene_t *scenes[2] = {engine.scene_h, engine.scene_v};
+	for (int c = 0; c < 2; c++) {
+		l->items[c] = obs_scene_add(scenes[c], l->image);
+		if (l->items[c]) {
+			obs_sceneitem_set_bounds_type(l->items[c], OBS_BOUNDS_SCALE_INNER);
+			obs_sceneitem_set_bounds_alignment(l->items[c], OBS_ALIGN_CENTER);
+		}
+	}
+	omni_layer_set_opacity(key, 0);
+}
+
+void omni_layer_place(const char *key, omni_canvas canvas, bool show, float x, float y, float width, float height)
+{
+	struct image_layer *l = layer_find(key, false);
+	if (!l || !l->items[canvas])
+		return;
+	struct vec2 pos = {.x = x, .y = y};
+	struct vec2 bounds = {.x = width, .y = height};
+	obs_sceneitem_set_pos(l->items[canvas], &pos);
+	obs_sceneitem_set_bounds(l->items[canvas], &bounds);
+	l->placed[canvas] = show;
+	layer_apply_visibility(l);
+}
+
+void omni_layer_set_opacity(const char *key, float opacity)
+{
+	struct image_layer *l = layer_find(key, false);
+	if (!l)
+		return;
+	l->opacity = opacity < 0 ? 0 : opacity > 1 ? 1 : opacity;
+	if (l->fade) {
+		obs_data_t *s = obs_data_create();
+		obs_data_set_double(s, "opacity", l->opacity);
+		obs_source_update(l->fade, s);
+		obs_data_release(s);
+	}
+	layer_apply_visibility(l);
+}
+
+void omni_layer_remove(const char *key)
+{
+	struct image_layer *l = layer_find(key, false);
+	if (!l)
+		return;
+	for (int c = 0; c < 2; c++) {
+		if (l->items[c])
+			obs_sceneitem_remove(l->items[c]);
+	}
+	if (l->fade) {
+		obs_source_filter_remove(l->image, l->fade);
+		obs_source_release(l->fade);
+	}
+	obs_source_release(l->image);
+	memset(l, 0, sizeof(*l));
+}
+
+static void layers_clear(void)
+{
+	for (int i = 0; i < MAX_LAYERS; i++) {
+		if (layers[i].key[0])
+			omni_layer_remove(layers[i].key);
+	}
 }

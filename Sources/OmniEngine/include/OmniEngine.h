@@ -104,7 +104,21 @@ void omni_overlay_remove(const char *key);
 /* Shows or hides every layer at once. */
 void omni_overlay_set_visible(bool visible);
 
-/* Camera source device, by AVCaptureDevice uniqueID. */
+/* ------------------------------------------------------------------------- */
+/* Image layers
+ *
+ * A PNG drawn on top of both canvases, with its own position on each and one
+ * opacity for fading (e.g. the Spotify now-playing card). Positions are the
+ * top-left corner in canvas pixels; the image keeps its aspect inside the box. */
+
+void omni_layer_set_image(const char *key, const char *png);
+void omni_layer_place(const char *key, omni_canvas canvas, bool show, float x, float y, float width, float height);
+/* 0 hides the layer entirely (nothing is rendered). */
+void omni_layer_set_opacity(const char *key, float opacity);
+void omni_layer_remove(const char *key);
+
+/* Camera source device, by AVCaptureDevice uniqueID. The camera starts closed;
+ * omni_source_set_enabled("Camera", true) opens it. */
 void omni_camera_set_device(const char *unique_id);
 const char *omni_camera_device(void);
 
@@ -153,6 +167,10 @@ typedef struct {
 	char uid[256];
 	char name[256];
 } omni_audio_device;
+
+/* Channel for the capture card's audio (the screen slot's capture device), or -1
+ * until a capture device has been picked. */
+int omni_mixer_capture_channel(void);
 
 /* Output devices for the monitor mix; returns how many were written. */
 int omni_monitor_devices(omni_audio_device *out, int max);

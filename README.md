@@ -40,7 +40,21 @@ click away. The choice is remembered; a window is found again by app and title
 next launch, and anything that's gone falls back to the main display.
 
 Only one of screen capture or the capture device runs at a time; the other is
-disabled so it doesn't render in the background.
+disabled so it doesn't render in the background. A capture card's sound gets its
+own mixer channel (stream + headphones) while it's in use. Cards like the Elgato
+HD60 X that show up as a video device plus a separate audio input of the same
+name are matched automatically.
+
+Hidden or unused cameras and capture cards are closed, not just hidden: the light
+goes off, no frames cross USB, and other apps can use them.
+
+## Spotify now playing
+
+Sources → Spotify: a card with the album art, song and artist fades in when a
+song starts (or resumes), stays 30 seconds and fades out; pausing hides it. It
+sits in a corner of the 16:9 canvas (and above the camera on 9:16), and isn't
+rendered at all while faded out. It reads Spotify's own play/pause
+announcements, so it needs no login. Spotify also gets its own mixer channel.
 
 ## Discord call overlay
 

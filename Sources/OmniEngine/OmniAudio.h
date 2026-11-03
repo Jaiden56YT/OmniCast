@@ -22,3 +22,10 @@ void omni_audio_start(const char *config_dir, obs_source_t *mic, obs_source_t *s
 /* Saves plugin state, unloads the plugins, removes the app channels and stops the
  * monitor. The mic and system sources stay with the caller. */
 void omni_audio_stop(void);
+
+/* Gives an existing source (e.g. a capture card) a mixer channel: its stream level
+ * is the source's own volume and its audio also goes to the monitor mix. The
+ * source stays with the caller. Returns the channel, or -1 when all are taken. */
+int omni_audio_attach_source(obs_source_t *src);
+/* Takes a channel given by omni_audio_attach_source back out of the mixer. */
+void omni_audio_detach_source(int channel);

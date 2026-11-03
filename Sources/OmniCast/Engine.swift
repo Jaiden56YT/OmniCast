@@ -167,6 +167,7 @@ final class Engine {
         refreshStats()
         virtualCamAvailable = omni_virtualcam_available()
         CallOverlay.shared.start()
+        SpotifyOverlay.shared.start()
     }
 
     func shutdown() {
@@ -353,6 +354,7 @@ final class Engine {
     func setScreenTarget(_ target: ScreenTarget) {
         omni_screen_set_target(target.kind.c, target.id)
         screenTarget = target
+        Mixer.shared.captureDeviceChanged(target.kind == .device ? target.name : nil)
         if let data = try? JSONEncoder().encode(target) {
             UserDefaults.standard.set(data, forKey: "screenTarget")
         }
@@ -369,6 +371,7 @@ final class Engine {
         if let target = saved.resolved() {
             omni_screen_set_target(target.kind.c, target.id)
             screenTarget = target
+            Mixer.shared.captureDeviceChanged(target.kind == .device ? target.name : nil)
         } else {
             screenTarget = ScreenTarget.mainDisplay
         }
@@ -401,8 +404,10 @@ final class Engine {
         }
         cameraDevice = String(cString: omni_camera_device())
         applySavedScreenTarget()
-        for name in ["Display", "Camera"] where UserDefaults.standard.object(forKey: "source.\(name)") != nil {
-            setSource(name, enabled: UserDefaults.standard.bool(forKey: "source.\(name)"))
+        // Always applied: the engine opens the camera (and the capture card) only
+        // once it knows they're shown.
+        for name in ["Display", "Camera"] {
+            setSource(name, enabled: UserDefaults.standard.object(forKey: "source.\(name)") as? Bool ?? true)
         }
     }
 
