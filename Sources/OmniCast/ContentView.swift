@@ -117,6 +117,16 @@ struct CanvasPreview: View {
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(Theme.textDim)
                 Spacer(minLength: 0)
+                Button {
+                    CallOverlay.shared.arranging.toggle()
+                } label: {
+                    Label(CallOverlay.shared.arranging ? "Done" : "Arrange",
+                          systemImage: CallOverlay.shared.arranging ? "checkmark" : "arrow.up.and.down.and.arrow.left.and.right")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .disabled(!engine.running)
+                .help("Move and resize the camera, your PNGtuber and the Discord people")
                 if recording { Badge(text: "REC", color: Theme.record) }
                 if live { Badge(text: "LIVE", color: Theme.live) }
                 if camera { Badge(text: "CAM", color: Theme.camera) }
@@ -133,8 +143,8 @@ struct CanvasPreview: View {
                 } else {
                     Color.black
                 }
-                if canvas == .horizontal, CallOverlay.shared.arranging {
-                    CallArrangeLayer()
+                if CallOverlay.shared.arranging {
+                    if canvas == .horizontal { CallArrangeLayer() } else { VerticalArrangeLayer() }
                 }
             }
             .aspectRatio(aspect, contentMode: .fit)

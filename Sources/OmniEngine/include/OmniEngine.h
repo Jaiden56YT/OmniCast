@@ -96,6 +96,11 @@ void omni_screen_set_target(omni_screen_kind kind, const char *id);
 
 /* Creates the layer if needed and loads its images (PNG paths). */
 void omni_overlay_set_images(const char *key, const char *idle_png, const char *talk_png);
+/* Same, with animations: frame PNGs and each frame's delay in seconds. Frames
+ * loop; the talking animation restarts from its first frame on each new burst
+ * of talking. All frames should be the same size. */
+void omni_overlay_set_frames(const char *key, const char *const *idle, const float *idle_delays, int idle_count,
+			     const char *const *talk, const float *talk_delays, int talk_count);
 /* Centre point and box size in canvas pixels; the image keeps its aspect inside
  * the box. lift moves the talking image up by that many pixels. */
 void omni_overlay_place(const char *key, float cx, float cy, float width, float height, bool flip, float lift);
@@ -123,6 +128,9 @@ void omni_layer_remove(const char *key);
  * omni_source_set_enabled("Camera", true) opens it. */
 void omni_camera_set_device(const char *unique_id);
 const char *omni_camera_device(void);
+/* Where the camera sits on a canvas: top-left and box size in canvas pixels. On
+ * 16:9 it fits inside the box; on 9:16 it fills the box, cropped. */
+void omni_camera_place(omni_canvas canvas, float x, float y, float width, float height);
 
 void omni_set_status_callback(omni_status_callback cb, void *ctx);
 

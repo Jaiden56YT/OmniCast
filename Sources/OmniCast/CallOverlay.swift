@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import Foundation
 import Observation
 import OmniEngine
@@ -72,6 +73,57 @@ final class CallOverlay {
     }
 
     var selected: String?
+
+    // MARK: Camera position
+
+    struct Box: Codable, Equatable {
+        var x: Double, y: Double, w: Double, h: Double
+    }
+
+    /// Where the engine puts the camera unless you've moved it.
+    static func defaultCamera(_ canvas: Canvas) -> Box {
+        canvas == .horizontal
+            ? Box(x: 1920 - 480 - 27, y: 1080 - 270 - 27, w: 480, h: 270)
+            : Box(x: 0, y: 960, w: 1080, h: 960)
+    }
+
+    private(set) var cameraBoxes: [Canvas: Box] = {
+        var boxes: [Canvas: Box] = [:]
+        for c in Canvas.allCases {
+            if let data = UserDefaults.standard.data(forKey: "layout.camera.\(c.rawValue)"),
+               let box = try? JSONDecoder().decode(Box.self, from: data) { boxes[c] = box }
+        }
+        return boxes
+    }()
+
+    func cameraBox(_ canvas: Canvas) -> Box { cameraBoxes[canvas] ?? Self.defaultCamera(canvas) }
+
+    func updateCamera(_ canvas: Canvas, _ change: (inout Box) -> Void) {
+        let size = canvas == .horizontal ? CGSize(width: 1920, height: 1080) : CGSize(width: 1080, height: 1920)
+        var box = cameraBox(canvas)
+        change(&box)
+        box.w = min(max(box.w, 80), size.width)
+        box.h = min(max(box.h, 60), size.height)
+        box.x = min(max(box.x, -box.w / 2), size.width - box.w / 2)
+        box.y = min(max(box.y, -box.h / 2), size.height - box.h / 2)
+        cameraBoxes[canvas] = box
+        if let data = try? JSONEncoder().encode(box) {
+            UserDefaults.standard.set(data, forKey: "layout.camera.\(canvas.rawValue)")
+        }
+        placeCamera(canvas)
+    }
+
+    func resetCamera(_ canvas: Canvas) {
+        cameraBoxes[canvas] = nil
+        UserDefaults.standard.removeObject(forKey: "layout.camera.\(canvas.rawValue)")
+        placeCamera(canvas)
+    }
+
+    private func placeCamera(_ canvas: Canvas) {
+        let b = cameraBox(canvas)
+        omni_camera_place(canvas == .vertical ? OMNI_CANVAS_VERTICAL : OMNI_CANVAS_HORIZONTAL,
+                          Float(b.x), Float(b.y), Float(b.w), Float(b.h))
+    }
     private(set) var layouts: [String: MemberLayout] = [:]
     /// Image size per person (from the image file), for the box width.
     private(set) var aspects: [String: Double] = [:]
@@ -133,6 +185,7 @@ final class CallOverlay {
         call.onMembersChanged = { [weak self] in self?.sync() }
         call.onSpeaking = { id, speaking in omni_overlay_set_speaking(id, speaking) }
         adoptMeImages()
+        Canvas.allCases.forEach(placeCamera)
         sync()
         // 30 checks a second: the mouth keeps up with speech without flicker.
         voiceTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
@@ -281,16 +334,19 @@ final class CallOverlay {
         let talkURL = folder.appendingPathComponent("\(member.id)-talk.png")
         let dim = dimQuiet
 
-        if let idlePath = l.idlePath, let idleFull = NSImage(contentsOfFile: idlePath) {
-            let talkFull = l.talkPath.flatMap(NSImage.init(contentsOfFile:)) ?? idleFull
-            // Cut away empty transparent space, with one crop for both images so
-            // the talking frame lines up exactly with the idle one.
-            let (idle, talk) = Self.trimmed(idleFull, talkFull)
-            aspects[member.id] = idle.size.width / max(idle.size.height, 1)
-            let dimIdle = dim && member.id != Self.meID // a PNGtuber's idle frame stays full colour
-            Self.writePNG(Self.render(idle, ring: false, circle: false, alpha: dimIdle ? 0.55 : 1), to: idleURL)
-            Self.writePNG(Self.render(talk, ring: false, circle: false, alpha: 1), to: talkURL)
-            show(member.id, idleURL, talkURL)
+        if let idlePath = l.idlePath, let idleFrames = Self.frames(at: idlePath) {
+            let talkFrames = l.talkPath.flatMap(Self.frames(at:)) ?? idleFrames
+            // One crop for every frame of both animations, so they line up exactly
+            // and the empty transparent space around the character is gone.
+            let crop = Self.opaqueUnion(idleFrames.images + talkFrames.images)
+            aspects[member.id] = crop.map { $0.width / max($0.height, 1) }
+                ?? Double(idleFrames.images[0].width) / Double(max(idleFrames.images[0].height, 1))
+            let dimIdle = dim && member.id != Self.meID // a PNGtuber's idle frames stay full colour
+            let idlePaths = Self.writeFrames(idleFrames.images, crop: crop, alpha: dimIdle ? 0.55 : 1,
+                                             to: "\(member.id)-idle", in: folder)
+            let talkPaths = Self.writeFrames(talkFrames.images, crop: crop, alpha: 1,
+                                             to: "\(member.id)-talk", in: folder)
+            showFrames(member.id, idlePaths, idleFrames.delays, talkPaths, talkFrames.delays)
             return
         }
 
@@ -311,6 +367,21 @@ final class CallOverlay {
             guard self.shown.contains(where: { $0.id == member.id }) else { return }
             self.show(member.id, idleURL, talkURL)
         }
+    }
+
+    private func showFrames(_ id: String, _ idle: [String], _ idleDelays: [Float],
+                            _ talk: [String], _ talkDelays: [Float]) {
+        guard !idle.isEmpty else { return }
+        withCStrings(idle) { idlePtrs in
+            withCStrings(talk) { talkPtrs in
+                omni_overlay_set_frames(id, idlePtrs, idleDelays, Int32(idle.count),
+                                        talkPtrs, talkDelays, Int32(talk.count))
+            }
+        }
+        applyVisibility(id)
+        place(id)
+        let speaking = id == Self.meID ? meTalking : (shown.first { $0.id == id }?.speaking ?? false)
+        omni_overlay_set_speaking(id, speaking)
     }
 
     private func show(_ id: String, _ idle: URL, _ talk: URL) {
@@ -348,15 +419,47 @@ final class CallOverlay {
         }
     }
 
-    /// Both images cropped to the union of their non-transparent pixels.
-    private static func trimmed(_ a: NSImage, _ b: NSImage) -> (NSImage, NSImage) {
-        guard let ca = a.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let cb = b.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              ca.width == cb.width, ca.height == cb.height,
-              let ra = opaqueRect(ca), let rb = opaqueRect(cb) else { return (a, b) }
-        let r = ra.union(rb).insetBy(dx: -4, dy: -4).intersection(CGRect(x: 0, y: 0, width: ca.width, height: ca.height))
-        guard let xa = ca.cropping(to: r), let xb = cb.cropping(to: r) else { return (a, b) }
-        return (NSImage(cgImage: xa, size: r.size), NSImage(cgImage: xb, size: r.size))
+    struct Frames {
+        var images: [CGImage]
+        var delays: [Float] // seconds
+    }
+
+    /// Every frame of an image file with its delay: animated AVIF, GIF, APNG,
+    /// WebP and HEICS, or a single frame for a still image.
+    static func frames(at path: String) -> Frames? {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        var result = Frames(images: [], delays: [])
+        for i in 0..<CGImageSourceGetCount(source) {
+            guard let image = CGImageSourceCreateImageAtIndex(source, i, nil) else { continue }
+            result.images.append(image)
+            result.delays.append(frameDelay(source, i))
+        }
+        return result.images.isEmpty ? nil : result
+    }
+
+    /// Each format keeps its timing in its own dictionary ({GIF}, {PNG}, {AVIS}…)
+    /// under the same key names, so look in all of them.
+    private static func frameDelay(_ source: CGImageSource, _ index: Int) -> Float {
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [String: Any] else { return 0.1 }
+        for case let dict as [String: Any] in props.values {
+            for key in ["UnclampedDelayTime", "DelayTime"] {
+                if let value = (dict[key] as? NSNumber)?.floatValue, value > 0 { return value }
+            }
+        }
+        return 0.1
+    }
+
+    /// Union of the non-transparent pixels of all frames (top-left origin), with a
+    /// little margin. Nil when the frames differ in size or are fully transparent.
+    private static func opaqueUnion(_ images: [CGImage]) -> CGRect? {
+        guard let first = images.first, images.allSatisfy({ $0.width == first.width && $0.height == first.height })
+        else { return nil }
+        var union: CGRect?
+        for image in images {
+            guard let r = opaqueRect(image) else { continue }
+            union = union.map { $0.union(r) } ?? r
+        }
+        return union?.insetBy(dx: -4, dy: -4).intersection(CGRect(x: 0, y: 0, width: first.width, height: first.height))
     }
 
     /// Bounding box of pixels that aren't (nearly) fully transparent, in image
@@ -381,6 +484,28 @@ final class CallOverlay {
         return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
+    /// Writes cropped frames as PNGs (keeping full alpha) and returns their paths.
+    private static func writeFrames(_ images: [CGImage], crop: CGRect?, alpha: CGFloat, to base: String,
+                                    in folder: URL) -> [String] {
+        images.enumerated().compactMap { i, image in
+            guard var frame = crop.flatMap({ image.cropping(to: $0) }) ?? Optional(image) else { return nil }
+            if alpha < 1, let faded = faded(frame, alpha) { frame = faded }
+            let url = folder.appendingPathComponent("\(base)-\(i).png")
+            guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else { return nil }
+            CGImageDestinationAddImage(dest, frame, nil)
+            return CGImageDestinationFinalize(dest) ? url.path : nil
+        }
+    }
+
+    private static func faded(_ image: CGImage, _ alpha: CGFloat) -> CGImage? {
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setAlpha(alpha)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage()
+    }
+
     private static func letterAvatar(_ letter: String) -> NSImage {
         NSImage(size: NSSize(width: 256, height: 256), flipped: false) { rect in
             NSColor(red: 0.35, green: 0.40, blue: 0.95, alpha: 1).setFill()
@@ -401,4 +526,12 @@ final class CallOverlay {
               let png = rep.representation(using: .png, properties: [:]) else { return }
         try? png.write(to: url, options: .atomic)
     }
+}
+
+/// Calls body with a C array of C strings that live for the call.
+private func withCStrings<R>(_ strings: [String], _ body: (UnsafePointer<UnsafePointer<CChar>?>) -> R) -> R {
+    let owned = strings.map { strdup($0) }
+    defer { owned.forEach { free($0) } }
+    let pointers: [UnsafePointer<CChar>?] = owned.isEmpty ? [nil] : owned.map { UnsafePointer($0) }
+    return pointers.withUnsafeBufferPointer { body($0.baseAddress!) }
 }

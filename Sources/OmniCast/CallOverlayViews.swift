@@ -66,6 +66,7 @@ struct CallArrangeLayer: View {
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.001) // catches clicks on empty space
                     .onTapGesture { overlay.selected = nil }
+                CameraArrangeBox(canvas: .horizontal, scale: scale)
                 ForEach(overlay.shown) { member in
                     box(member, scale: scale)
                 }
@@ -333,5 +334,84 @@ struct YouSourceRow: View {
                 .foregroundStyle(Theme.textDim)
                 .padding(.leading, 26)
         }
+    }
+}
+
+/// The 9:16 preview while arranging: only the camera moves there.
+struct VerticalArrangeLayer: View {
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.001).onTapGesture { CallOverlay.shared.selected = nil }
+                CameraArrangeBox(canvas: .vertical, scale: geo.size.width / 1080)
+            }
+        }
+    }
+}
+
+/// Drag to move the camera, drag the corner to resize. On 16:9 the box keeps the
+/// camera's shape; on 9:16 it can be any shape (the camera fills it, cropped).
+struct CameraArrangeBox: View {
+    let canvas: Canvas
+    let scale: CGFloat
+    @Bindable private var overlay = CallOverlay.shared
+    @State private var dragStart: CallOverlay.Box?
+
+    private var id: String { "camera-\(canvas.rawValue)" }
+
+    var body: some View {
+        let box = overlay.cameraBox(canvas)
+        let selected = overlay.selected == id
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(Theme.camera, style: StrokeStyle(lineWidth: selected ? 2 : 1.5, dash: selected ? [] : [6, 4]))
+                .background(Theme.camera.opacity(0.06))
+                .overlay(alignment: .top) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                        Text("Camera")
+                        if selected {
+                            Button("Reset") { overlay.resetCamera(canvas) }
+                                .buttonStyle(.link)
+                        }
+                    }
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.black.opacity(0.65), in: Capsule())
+                    .offset(y: -10)
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStart == nil { dragStart = box }
+                        overlay.selected = id
+                        let start = dragStart!
+                        overlay.updateCamera(canvas) {
+                            $0.x = start.x + value.translation.width / scale
+                            $0.y = start.y + value.translation.height / scale
+                        }
+                    }
+                    .onEnded { _ in dragStart = nil })
+                .onTapGesture { overlay.selected = id }
+            Circle()
+                .fill(Theme.camera)
+                .frame(width: 12, height: 12)
+                .offset(x: 6, y: 6)
+                .gesture(DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStart == nil { dragStart = box }
+                        overlay.selected = id
+                        let start = dragStart!
+                        let keepShape = canvas == .horizontal
+                        overlay.updateCamera(canvas) {
+                            $0.w = start.w + value.translation.width / scale
+                            $0.h = keepShape ? $0.w * start.h / max(start.w, 1)
+                                : start.h + value.translation.height / scale
+                        }
+                    }
+                    .onEnded { _ in dragStart = nil })
+        }
+        .frame(width: box.w * scale, height: box.h * scale)
+        .position(x: (box.x + box.w / 2) * scale, y: (box.y + box.h / 2) * scale)
     }
 }

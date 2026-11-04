@@ -11,6 +11,8 @@
 #include <obs.h>
 #include <util/platform.h>
 
+#include <pthread.h>
+
 #include <math.h>
 #include <stdatomic.h>
 #include <sys/stat.h>
@@ -66,6 +68,7 @@ static struct {
 	char capture_id[256];
 	bool capture_running;
 	obs_sceneitem_t *screen_items[2]; /* omni_canvas */
+	obs_sceneitem_t *camera_items[2];
 	obs_sceneitem_t *device_items[2];
 	bool screen_on_device;
 	bool screen_visible;
@@ -291,6 +294,18 @@ const char *omni_camera_device(void)
 	return engine.camera_id;
 }
 
+/* On 16:9 the camera fits inside the box; on 9:16 it fills the box and is cropped. */
+void omni_camera_place(omni_canvas canvas, float x, float y, float width, float height)
+{
+	obs_sceneitem_t *item = engine.camera_items[canvas];
+	if (!item)
+		return;
+	struct vec2 pos = {.x = x, .y = y};
+	struct vec2 bounds = {.x = width, .y = height};
+	obs_sceneitem_set_pos(item, &pos);
+	obs_sceneitem_set_bounds(item, &bounds);
+}
+
 static void create_sources(void)
 {
 	obs_data_t *s = obs_data_create();
@@ -374,8 +389,8 @@ static void build_scenes(void)
 	engine.scene_h = obs_scene_create("Horizontal");
 	engine.screen_items[OMNI_CANVAS_HORIZONTAL] = place_screen(OMNI_CANVAS_HORIZONTAL, engine.display);
 	float cam_w = w * 0.25f, cam_h = h * 0.25f, margin = h * 0.025f;
-	place(engine.scene_h, engine.camera, w - cam_w - margin, h - cam_h - margin, cam_w, cam_h,
-	      OBS_BOUNDS_SCALE_INNER, false);
+	engine.camera_items[OMNI_CANVAS_HORIZONTAL] = place(engine.scene_h, engine.camera, w - cam_w - margin,
+							    h - cam_h - margin, cam_w, cam_h, OBS_BOUNDS_SCALE_INNER, false);
 	obs_set_output_source(0, obs_scene_get_source(engine.scene_h));
 
 	/* Vertical: screen on the top half, camera filling the bottom half. */
@@ -383,7 +398,8 @@ static void build_scenes(void)
 	h = (float)engine.vertical.height;
 	engine.scene_v = obs_canvas_scene_create(engine.vertical_canvas, "Vertical");
 	engine.screen_items[OMNI_CANVAS_VERTICAL] = place_screen(OMNI_CANVAS_VERTICAL, engine.display);
-	place(engine.scene_v, engine.camera, 0, h * 0.5f, w, h * 0.5f, OBS_BOUNDS_SCALE_OUTER, true);
+	engine.camera_items[OMNI_CANVAS_VERTICAL] =
+		place(engine.scene_v, engine.camera, 0, h * 0.5f, w, h * 0.5f, OBS_BOUNDS_SCALE_OUTER, true);
 	obs_canvas_set_channel(engine.vertical_canvas, 0, obs_scene_get_source(engine.scene_v));
 }
 
@@ -1542,24 +1558,44 @@ void omni_virtualcam_stop(void)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Call overlay */
+/* Call overlay
+ *
+ * Each layer has an idle and a talking frame set. A set with several frames is
+ * an animation (e.g. a PNGtuber from an animated AVIF/GIF): every frame is its
+ * own preloaded image source, and a tick callback on the libobs video thread
+ * shows one at a time at each frame's delay, so playback is in step with
+ * rendering and nothing is decoded while live. */
 
 #define MAX_OVERLAY 32
+#define MAX_FRAMES 48
+
+struct frame_set {
+	int count;
+	obs_source_t *src[MAX_FRAMES];
+	obs_sceneitem_t *item[MAX_FRAMES];
+	float delay[MAX_FRAMES]; /* seconds */
+	int cur;
+	float elapsed;
+};
 
 struct overlay_layer {
 	char key[64];
-	obs_source_t *idle;
-	obs_source_t *talk;
-	obs_sceneitem_t *idle_item;
-	obs_sceneitem_t *talk_item;
+	struct frame_set set[2]; /* 0 idle, 1 talking */
 	bool speaking;
+	bool was_speaking;
 	bool hidden;
+	obs_sceneitem_t *shown; /* the item the tick last made visible */
+	bool placed;
+	float cx, cy, width, height, lift;
+	bool flip;
 };
 
 static struct {
 	struct overlay_layer layers[MAX_OVERLAY];
 	bool hidden;
-} overlay;
+	bool ticking;
+	pthread_mutex_t lock; /* the tick runs on the video thread */
+} overlay = {.lock = PTHREAD_MUTEX_INITIALIZER};
 
 static struct overlay_layer *overlay_find(const char *key, bool create)
 {
@@ -1576,116 +1612,215 @@ static struct overlay_layer *overlay_find(const char *key, bool create)
 	return create ? free_slot : NULL;
 }
 
-static void overlay_apply_visibility(struct overlay_layer *l)
+/* Shows the active set's current frame and hides whatever was shown before. */
+static void overlay_show_current(struct overlay_layer *l)
 {
-	bool show = !overlay.hidden && !l->hidden;
-	if (l->idle_item)
-		obs_sceneitem_set_visible(l->idle_item, show && !l->speaking);
-	if (l->talk_item)
-		obs_sceneitem_set_visible(l->talk_item, show && l->speaking);
-}
-
-void omni_overlay_set_layer_visible(const char *key, bool visible)
-{
-	struct overlay_layer *l = overlay_find(key, false);
-	if (!l)
+	obs_sceneitem_t *want = NULL;
+	if (!overlay.hidden && !l->hidden) {
+		struct frame_set *fs = &l->set[l->speaking && l->set[1].count ? 1 : 0];
+		if (fs->count)
+			want = fs->item[fs->cur];
+	}
+	if (want == l->shown)
 		return;
-	l->hidden = !visible;
-	overlay_apply_visibility(l);
+	if (l->shown)
+		obs_sceneitem_set_visible(l->shown, false);
+	if (want)
+		obs_sceneitem_set_visible(want, true);
+	l->shown = want;
 }
 
-static void overlay_load(obs_source_t **source, obs_sceneitem_t **item, const char *name, const char *path)
+static void overlay_tick(void *param, float seconds)
 {
-	obs_data_t *s = obs_data_create();
-	obs_data_set_string(s, "file", path);
-	if (*source) {
-		obs_source_update(*source, s);
-	} else {
-		*source = obs_source_create_private("image_source", name, s);
-		*item = *source ? obs_scene_add(engine.scene_h, *source) : NULL;
-		if (*item) {
-			/* Centre-aligned, so flipping mirrors in place. */
-			obs_sceneitem_set_alignment(*item, OBS_ALIGN_CENTER);
-			obs_sceneitem_set_bounds_type(*item, OBS_BOUNDS_SCALE_INNER);
-			obs_sceneitem_set_bounds_alignment(*item, OBS_ALIGN_CENTER);
+	UNUSED_PARAMETER(param);
+	pthread_mutex_lock(&overlay.lock);
+	for (int i = 0; i < MAX_OVERLAY; i++) {
+		struct overlay_layer *l = &overlay.layers[i];
+		if (!l->key[0])
+			continue;
+		if (l->speaking != l->was_speaking) {
+			/* A new sentence starts the talking animation from its first frame. */
+			if (l->speaking) {
+				l->set[1].cur = 0;
+				l->set[1].elapsed = 0;
+			}
+			l->was_speaking = l->speaking;
+		}
+		struct frame_set *fs = &l->set[l->speaking && l->set[1].count ? 1 : 0];
+		if (fs->count > 1) {
+			fs->elapsed += seconds;
+			while (fs->elapsed >= fs->delay[fs->cur]) {
+				fs->elapsed -= fs->delay[fs->cur];
+				fs->cur = (fs->cur + 1) % fs->count;
+			}
+		}
+		overlay_show_current(l);
+	}
+	pthread_mutex_unlock(&overlay.lock);
+}
+
+static void overlay_apply_place(struct overlay_layer *l)
+{
+	if (!l->placed)
+		return;
+	struct vec2 bounds = {.x = l->width, .y = l->height};
+	struct vec2 scale = {.x = l->flip ? -1.0f : 1.0f, .y = 1.0f};
+	for (int s = 0; s < 2; s++) {
+		for (int f = 0; f < l->set[s].count; f++) {
+			obs_sceneitem_t *item = l->set[s].item[f];
+			if (!item)
+				continue;
+			struct vec2 pos = {.x = l->cx, .y = s == 1 ? l->cy - l->lift : l->cy};
+			obs_sceneitem_set_pos(item, &pos);
+			obs_sceneitem_set_bounds(item, &bounds);
+			obs_sceneitem_set_scale(item, &scale);
 		}
 	}
-	obs_data_release(s);
+}
+
+static void frame_set_free(struct frame_set *fs)
+{
+	for (int f = 0; f < fs->count; f++) {
+		if (fs->item[f])
+			obs_sceneitem_remove(fs->item[f]);
+		obs_source_release(fs->src[f]);
+	}
+	memset(fs, 0, sizeof(*fs));
+}
+
+static void frame_set_load(struct frame_set *fs, const char *const *paths, const float *delays, int count)
+{
+	frame_set_free(fs);
+	if (count > MAX_FRAMES)
+		count = MAX_FRAMES;
+	for (int f = 0; f < count; f++) {
+		obs_data_t *s = obs_data_create();
+		obs_data_set_string(s, "file", paths[f]);
+		obs_source_t *src = obs_source_create_private("image_source", "Call member frame", s);
+		obs_data_release(s);
+		obs_sceneitem_t *item = src ? obs_scene_add(engine.scene_h, src) : NULL;
+		if (item) {
+			/* Centre-aligned, so flipping mirrors in place; hidden until the tick picks it. */
+			obs_sceneitem_set_visible(item, false);
+			obs_sceneitem_set_alignment(item, OBS_ALIGN_CENTER);
+			obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
+			obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
+		}
+		fs->src[fs->count] = src;
+		fs->item[fs->count] = item;
+		/* Animated images often store a 0 delay for "as fast as possible"; browsers use 100 ms. */
+		fs->delay[fs->count] = delays && delays[f] >= 0.02f ? delays[f] : 0.1f;
+		fs->count++;
+	}
+}
+
+void omni_overlay_set_frames(const char *key, const char *const *idle, const float *idle_delays, int idle_count,
+			     const char *const *talk, const float *talk_delays, int talk_count)
+{
+	if (!engine.running || !key || !*key || idle_count < 1)
+		return;
+	/* Outside overlay.lock: libobs calls the tick with its own callback lock
+	 * held, and the tick then takes overlay.lock, so taking them in the other
+	 * order here could deadlock. Only the main thread adds or removes it. */
+	if (!overlay.ticking) {
+		obs_add_tick_callback(overlay_tick, NULL);
+		overlay.ticking = true;
+	}
+	pthread_mutex_lock(&overlay.lock);
+	struct overlay_layer *l = overlay_find(key, true);
+	if (l) {
+		l->shown = NULL;
+		frame_set_load(&l->set[0], idle, idle_delays, idle_count);
+		frame_set_load(&l->set[1], talk, talk_delays, talk_count);
+		overlay_apply_place(l);
+	}
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 void omni_overlay_set_images(const char *key, const char *idle_png, const char *talk_png)
 {
-	if (!engine.running || !key || !*key)
-		return;
-	struct overlay_layer *l = overlay_find(key, true);
-	if (!l)
-		return;
-	overlay_load(&l->idle, &l->idle_item, "Call member", idle_png);
-	overlay_load(&l->talk, &l->talk_item, "Call member talking", talk_png);
-	overlay_apply_visibility(l);
+	const char *idle[1] = {idle_png};
+	const char *talk[1] = {talk_png};
+	omni_overlay_set_frames(key, idle, NULL, 1, talk, NULL, 1);
 }
 
 void omni_overlay_place(const char *key, float cx, float cy, float width, float height, bool flip, float lift)
 {
+	pthread_mutex_lock(&overlay.lock);
 	struct overlay_layer *l = overlay_find(key, false);
-	if (!l)
-		return;
-	struct vec2 bounds = {.x = width, .y = height};
-	struct vec2 scale = {.x = flip ? -1.0f : 1.0f, .y = 1.0f};
-	obs_sceneitem_t *items[2] = {l->idle_item, l->talk_item};
-	for (int i = 0; i < 2; i++) {
-		if (!items[i])
-			continue;
-		struct vec2 pos = {.x = cx, .y = i == 1 ? cy - lift : cy};
-		obs_sceneitem_set_pos(items[i], &pos);
-		obs_sceneitem_set_bounds(items[i], &bounds);
-		obs_sceneitem_set_scale(items[i], &scale);
+	if (l) {
+		l->placed = true;
+		l->cx = cx;
+		l->cy = cy;
+		l->width = width;
+		l->height = height;
+		l->flip = flip;
+		l->lift = lift;
+		overlay_apply_place(l);
 	}
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 void omni_overlay_set_speaking(const char *key, bool speaking)
 {
+	pthread_mutex_lock(&overlay.lock);
 	struct overlay_layer *l = overlay_find(key, false);
-	if (!l || l->speaking == speaking)
-		return;
-	l->speaking = speaking;
-	overlay_apply_visibility(l);
+	if (l)
+		l->speaking = speaking; /* the tick swaps the frames */
+	pthread_mutex_unlock(&overlay.lock);
+}
+
+void omni_overlay_set_layer_visible(const char *key, bool visible)
+{
+	pthread_mutex_lock(&overlay.lock);
+	struct overlay_layer *l = overlay_find(key, false);
+	if (l) {
+		l->hidden = !visible;
+		overlay_show_current(l);
+	}
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 static void overlay_free(struct overlay_layer *l)
 {
-	if (l->idle_item)
-		obs_sceneitem_remove(l->idle_item);
-	if (l->talk_item)
-		obs_sceneitem_remove(l->talk_item);
-	obs_source_release(l->idle);
-	obs_source_release(l->talk);
+	frame_set_free(&l->set[0]);
+	frame_set_free(&l->set[1]);
 	memset(l, 0, sizeof(*l));
 }
 
 void omni_overlay_remove(const char *key)
 {
+	pthread_mutex_lock(&overlay.lock);
 	struct overlay_layer *l = overlay_find(key, false);
 	if (l)
 		overlay_free(l);
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 void omni_overlay_set_visible(bool visible)
 {
+	pthread_mutex_lock(&overlay.lock);
 	overlay.hidden = !visible;
 	for (int i = 0; i < MAX_OVERLAY; i++) {
 		if (overlay.layers[i].key[0])
-			overlay_apply_visibility(&overlay.layers[i]);
+			overlay_show_current(&overlay.layers[i]);
 	}
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 static void overlay_clear(void)
 {
+	if (overlay.ticking) {
+		obs_remove_tick_callback(overlay_tick, NULL);
+		overlay.ticking = false;
+	}
+	pthread_mutex_lock(&overlay.lock);
 	for (int i = 0; i < MAX_OVERLAY; i++) {
 		if (overlay.layers[i].key[0])
 			overlay_free(&overlay.layers[i]);
 	}
 	overlay.hidden = false;
+	pthread_mutex_unlock(&overlay.lock);
 }
 
 /* ------------------------------------------------------------------------- */
