@@ -103,6 +103,8 @@ void omni_overlay_set_speaking(const char *key, bool speaking);
 void omni_overlay_remove(const char *key);
 /* Shows or hides every layer at once. */
 void omni_overlay_set_visible(bool visible);
+/* Shows or hides one layer (on top of the switch above). */
+void omni_overlay_set_layer_visible(const char *key, bool visible);
 
 /* ------------------------------------------------------------------------- */
 /* Image layers
@@ -159,6 +161,10 @@ void omni_mixer_remove_app(int channel);
 /* Peak per side in dBFS since the last call, before either fader (-INFINITY when
  * silent). Safe from any thread. */
 void omni_mixer_levels(int channel, float *left_db, float *right_db);
+/* Peak of the most recent audio packet in dBFS, after the plugins, before the
+ * faders. Unlike omni_mixer_levels it doesn't reset, so it can be read alongside
+ * the meters (the PNGtuber's voice detection uses it). */
+float omni_mixer_level(int channel);
 /* Linear gain, 1.0 = unity. */
 void omni_mixer_set_stream(int channel, float mul, bool muted);
 void omni_mixer_set_monitor(int channel, float mul, bool muted);

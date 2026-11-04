@@ -168,6 +168,7 @@ struct SourcesPanel: View {
                 }
                 SourceRow(name: "Camera", icon: "video", isOn: $camera)
                 CameraPicker()
+                YouSourceRow()
                 CallSourceRow()
                 SpotifySourceRow()
                 Spacer(minLength: 8)

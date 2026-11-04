@@ -18,7 +18,7 @@ struct CallSourceRow: View {
                         .foregroundStyle(overlay.visible ? .white.opacity(0.8) : Theme.textDim)
                 }
                 .buttonStyle(.borderless)
-                .help(overlay.visible ? "Hide the call overlay" : "Show the call overlay")
+                .help(overlay.visible ? "Hide the Discord call's people" : "Show the Discord call's people")
             }
             .padding(.horizontal, 8)
             .frame(height: 26)
@@ -186,11 +186,11 @@ struct MemberInspector: View {
             .controlSize(.small)
             .help("Which way this person's image looks before flipping; auto-arrange uses it")
             HStack {
-                Button("Idle image…") { pick { path in overlay.update(member.id) { $0.idlePath = path } } }
-                Button("Talking…") { pick { path in overlay.update(member.id) { $0.talkPath = path } } }
+                Button("Idle image…") { pick { overlay.importImage($0, for: member.id, talking: false) } }
+                Button("Talking…") { pick { overlay.importImage($0, for: member.id, talking: true) } }
             }
             .controlSize(.small)
-            if layout.idlePath != nil || layout.talkPath != nil {
+            if member.id != CallOverlay.meID, layout.idlePath != nil || layout.talkPath != nil {
                 Button("Use Discord avatar") {
                     overlay.update(member.id) {
                         $0.idlePath = nil
@@ -202,11 +202,8 @@ struct MemberInspector: View {
         }
     }
 
-    private func pick(_ done: (String) -> Void) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .heic]
-        panel.message = "Choose an image for \(member.name). PNGs with transparency work best."
-        if panel.runModal() == .OK, let url = panel.url { done(url.path) }
+    private func pick(_ done: (URL) -> Void) {
+        if let url = pickImage(for: member.name) { done(url) }
     }
 }
 
@@ -234,7 +231,7 @@ struct DiscordSettingsView: View {
             }
             Section {
                 TextField("Client ID", text: $clientID)
-                SecureField("Client Secret", text: $secret)
+                SecureField(call.isSetUp ? "Client Secret (saved)" : "Client Secret", text: $secret)
                 HStack {
                     Text(statusText).font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -261,10 +258,10 @@ struct DiscordSettingsView: View {
     private var connectButton: some View {
         Button("Connect") {
             call.clientID = clientID
-            call.clientSecret = secret
+            if !secret.isEmpty { call.clientSecret = secret }
             call.connect()
         }
-        .disabled(clientID.isEmpty || secret.isEmpty)
+        .disabled(clientID.isEmpty || (secret.isEmpty && !call.isSetUp))
     }
 
     private var statusText: String {
@@ -276,6 +273,65 @@ struct DiscordSettingsView: View {
         case .noCall: "Connected, not in a call"
         case .inCall(let name): "Connected · \(name)"
         case .failed(let message): message
+        }
+    }
+}
+
+@MainActor
+func pickImage(for name: String) -> URL? {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .heic, UTType("public.avif")].compactMap { $0 }
+    panel.message = "Choose an image for \(name). PNG or AVIF with transparency works best."
+    return panel.runModal() == .OK ? panel.url : nil
+}
+
+/// Sources panel row for your own PNGtuber, which talks when your mic does.
+struct YouSourceRow: View {
+    @Bindable private var overlay = CallOverlay.shared
+
+    private static let sensitivities: [(String, Double)] = [("High", -50), ("Medium", -40), ("Low", -30)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle").frame(width: 18)
+                Text("You").font(.system(size: 12))
+                Circle()
+                    .fill(overlay.meTalking ? Theme.good : Theme.textDim.opacity(0.4))
+                    .frame(width: 6, height: 6)
+                    .help("Lights up when your mic makes your PNGtuber talk")
+                Spacer()
+                Menu {
+                    Button("Idle image…") {
+                        if let url = pickImage(for: "you") { overlay.importImage(url, for: CallOverlay.meID, talking: false) }
+                    }
+                    Button("Talking image…") {
+                        if let url = pickImage(for: "you") { overlay.importImage(url, for: CallOverlay.meID, talking: true) }
+                    }
+                    Picker("Mic sensitivity", selection: $overlay.meThreshold) {
+                        ForEach(Self.sensitivities, id: \.1) { Text($0.0).tag($0.1) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(!Engine.shared.running)
+                Button { overlay.meEnabled.toggle() } label: {
+                    Image(systemName: overlay.meEnabled ? "eye" : "eye.slash")
+                        .foregroundStyle(overlay.meEnabled ? .white.opacity(0.8) : Theme.textDim)
+                }
+                .buttonStyle(.borderless)
+                .help(overlay.meEnabled ? "Hide your PNGtuber" : "Show your PNGtuber")
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
+            Text(overlay.hasMeImages ? "PNGtuber · talks with your mic" : "Pick idle and talking images in ⋯")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textDim)
+                .padding(.leading, 26)
         }
     }
 }

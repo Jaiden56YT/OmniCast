@@ -70,7 +70,8 @@ struct Destination: Identifiable, Codable, Equatable {
         nonmutating set { Keychain.write(id.uuidString, newValue) }
     }
 
-    var isReady: Bool { !server.isEmpty && !key.isEmpty }
+    /// Checked without reading the key, so drawing the list never prompts.
+    var isReady: Bool { !server.isEmpty && Keychain.exists(id.uuidString) }
 }
 
 enum DestinationStore {
@@ -96,6 +97,27 @@ enum Keychain {
     static let streamKeyService = "OmniCast stream key"
     static let discordService = "OmniCast Discord"
 
+    /// Whether an item exists, from its attributes only. Unlike reading the secret
+    /// this never shows a keychain prompt, so the UI can ask it freely.
+    static func exists(_ account: String, service: String = streamKeyService) -> Bool {
+        let id = service + "/" + account
+        if let known = existsLock.withLock({ existsCache[id] }) { return known }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+        ]
+        var result: AnyObject?
+        let found = SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+        existsLock.withLock { existsCache[id] = found }
+        return found
+    }
+
+    // Mutex needs macOS 15; the app runs on 14.
+    nonisolated(unsafe) private static var existsCache: [String: Bool] = [:]
+    private static let existsLock = NSLock()
+
     static func read(_ account: String, service: String = streamKeyService) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -116,6 +138,7 @@ enum Keychain {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
+        existsLock.withLock { existsCache[service + "/" + account] = !value.isEmpty }
         guard !value.isEmpty else { return }
         var add = query
         add[kSecValueData as String] = Data(value.utf8)

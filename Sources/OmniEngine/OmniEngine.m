@@ -1553,6 +1553,7 @@ struct overlay_layer {
 	obs_sceneitem_t *idle_item;
 	obs_sceneitem_t *talk_item;
 	bool speaking;
+	bool hidden;
 };
 
 static struct {
@@ -1577,10 +1578,20 @@ static struct overlay_layer *overlay_find(const char *key, bool create)
 
 static void overlay_apply_visibility(struct overlay_layer *l)
 {
+	bool show = !overlay.hidden && !l->hidden;
 	if (l->idle_item)
-		obs_sceneitem_set_visible(l->idle_item, !overlay.hidden && !l->speaking);
+		obs_sceneitem_set_visible(l->idle_item, show && !l->speaking);
 	if (l->talk_item)
-		obs_sceneitem_set_visible(l->talk_item, !overlay.hidden && l->speaking);
+		obs_sceneitem_set_visible(l->talk_item, show && l->speaking);
+}
+
+void omni_overlay_set_layer_visible(const char *key, bool visible)
+{
+	struct overlay_layer *l = overlay_find(key, false);
+	if (!l)
+		return;
+	l->hidden = !visible;
+	overlay_apply_visibility(l);
 }
 
 static void overlay_load(obs_source_t **source, obs_sceneitem_t **item, const char *name, const char *path)

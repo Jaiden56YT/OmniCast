@@ -30,6 +30,9 @@ final class DiscordCall {
     private(set) var status = Status.notSetUp
     /// In the order they joined.
     private(set) var members: [CallMember] = []
+    /// The signed-in Discord user, left out of the overlay (your own PNGtuber is
+    /// driven by your mic instead).
+    private(set) var selfID: String?
 
     /// Called on every join/leave/rename, and on talking changes with the user id.
     var onMembersChanged: (() -> Void)?
@@ -43,12 +46,46 @@ final class DiscordCall {
         set { UserDefaults.standard.set(newValue.trimmingCharacters(in: .whitespaces), forKey: "discord.clientID") }
     }
 
+    /// Kept in memory once loaded. Keychain reads can show a prompt and block
+    /// until it's answered, so they happen off the main thread, only when
+    /// connecting (see loadCredentials), never at launch.
+    private var secretCache: String?
+    private var tokenCache: Token?
+    private var credentialsLoaded = false
+
+    /// Empty until credentials are loaded; setting it saves it.
     var clientSecret: String {
-        get { Keychain.read("discord.secret", service: Keychain.discordService) ?? "" }
-        set { Keychain.write("discord.secret", newValue.trimmingCharacters(in: .whitespaces), service: Keychain.discordService) }
+        get { secretCache ?? "" }
+        set {
+            let value = newValue.trimmingCharacters(in: .whitespaces)
+            secretCache = value
+            DispatchQueue.global(qos: .userInitiated).async {
+                Keychain.write("discord.secret", value, service: Keychain.discordService)
+            }
+        }
     }
 
-    var isSetUp: Bool { !clientID.isEmpty && !clientSecret.isEmpty }
+    /// From the keychain item's attributes, which never prompts.
+    var isSetUp: Bool { !clientID.isEmpty && (secretCache.map { !$0.isEmpty } ?? Keychain.exists("discord.secret", service: Keychain.discordService)) }
+
+    private func loadCredentials(then next: @escaping () -> Void) {
+        guard !credentialsLoaded else { return next() }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let secret = Keychain.read("discord.secret", service: Keychain.discordService)
+            let token = Keychain.read("discord.token", service: Keychain.discordService)
+                .flatMap { $0.data(using: .utf8) }
+                .flatMap { try? JSONDecoder().decode(Token.self, from: $0) }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let call = DiscordCall.shared
+                    if call.secretCache == nil { call.secretCache = secret }
+                    call.tokenCache = token
+                    call.credentialsLoaded = true
+                    next()
+                }
+            }
+        }
+    }
 
     // MARK: Sessions
 
@@ -74,14 +111,13 @@ final class DiscordCall {
     }
 
     private var token: Token? {
-        get {
-            Keychain.read("discord.token", service: Keychain.discordService)
-                .flatMap { $0.data(using: .utf8) }
-                .flatMap { try? JSONDecoder().decode(Token.self, from: $0) }
-        }
+        get { tokenCache }
         set {
+            tokenCache = newValue
             let text = newValue.flatMap { try? JSONEncoder().encode($0) }.flatMap { String(data: $0, encoding: .utf8) }
-            Keychain.write("discord.token", text ?? "", service: Keychain.discordService)
+            DispatchQueue.global(qos: .userInitiated).async {
+                Keychain.write("discord.token", text ?? "", service: Keychain.discordService)
+            }
         }
     }
 
@@ -89,7 +125,11 @@ final class DiscordCall {
         guard isSetUp else { status = .notSetUp; return }
         wantConnected = true
         UserDefaults.standard.set(true, forKey: "discord.autoConnect")
-        openSessions()
+        status = .connecting
+        loadCredentials { [weak self] in
+            guard let self, self.wantConnected else { return }
+            self.openSessions()
+        }
     }
 
     func disconnect() {
@@ -199,7 +239,9 @@ final class DiscordCall {
         guard msg["cmd"] as? String == "DISPATCH", let evt = msg["evt"] as? String else { return }
         let data = msg["data"] as? [String: Any] ?? [:]
         switch evt {
-        case "READY": authenticate(session)
+        case "READY":
+            if let id = (data["user"] as? [String: Any])?["id"] as? String { selfID = id }
+            authenticate(session)
         case "VOICE_CHANNEL_SELECT": channelSelected(data["channel_id"] as? String, on: session)
         case "VOICE_STATE_CREATE", "VOICE_STATE_UPDATE":
             guard session === active, let member = Self.member(from: data) else { return }

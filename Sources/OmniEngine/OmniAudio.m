@@ -57,6 +57,7 @@ struct ring {
 	_Atomic bool flush;
 	_Atomic float gain; /* monitor level, 0 when muted */
 	_Atomic float peak[2];
+	_Atomic float last; /* loudest side of the most recent packet, linear */
 	_Atomic uint64_t write_pos;
 	_Atomic uint64_t read_pos;
 	/* Output thread only. */
@@ -97,6 +98,7 @@ static void on_channel_audio(void *param, obs_source_t *source, const struct aud
 	}
 	store_peak(&r->peak[0], pl);
 	store_peak(&r->peak[1], pr);
+	atomic_store_explicit(&r->last, fmaxf(pl, pr), memory_order_relaxed);
 
 	if (!atomic_load_explicit(&r->active, memory_order_acquire))
 		return;
@@ -1101,6 +1103,14 @@ void omni_mixer_levels(int c, float *left_db, float *right_db)
 	float r = atomic_exchange_explicit(&rings[c].peak[1], 0.0f, memory_order_relaxed);
 	*left_db = l > 0 ? 20 * log10f(l) : -INFINITY;
 	*right_db = r > 0 ? 20 * log10f(r) : -INFINITY;
+}
+
+float omni_mixer_level(int c)
+{
+	if (c < 0 || c >= MAX_CH || !channels[c])
+		return -INFINITY;
+	float v = atomic_load_explicit(&rings[c].last, memory_order_relaxed);
+	return v > 0 ? 20 * log10f(v) : -INFINITY;
 }
 
 void omni_mixer_set_stream(int c, float mul, bool muted)
