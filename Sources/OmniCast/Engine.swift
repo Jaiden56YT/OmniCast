@@ -168,6 +168,7 @@ final class Engine {
         virtualCamAvailable = omni_virtualcam_available()
         CallOverlay.shared.start()
         SpotifyOverlay.shared.start()
+        ChatOverlay.shared.start()
     }
 
     func shutdown() {

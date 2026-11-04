@@ -180,6 +180,7 @@ struct SourcesPanel: View {
                 CameraPicker()
                 YouSourceRow()
                 CallSourceRow()
+                ChatSourceRow()
                 SpotifySourceRow()
                 Spacer(minLength: 8)
                 Theme.hairline.frame(height: 1)

@@ -48,6 +48,24 @@ name are matched automatically.
 Hidden or unused cameras and capture cards are closed, not just hidden: the light
 goes off, no frames cross USB, and other apps can use them.
 
+## Merged chat
+
+YouTube, Twitch and Kick chat in one overlay, read only (nothing is ever posted):
+
+- **Twitch**: Twitch's official chat connection, anonymously.
+- **Kick**: the realtime feed kick.com itself uses (a guest token from Kick's
+  realtime API, no login; unofficial).
+- **YouTube**: the live-chat feed youtube.com's chat window uses, found from the
+  channel's /live page once you're live. No API key or quota; unofficial.
+- Instagram doesn't let apps read live chat, so it can't be included.
+
+Lines are drawn in the sona's style: heavy rounded type with a thick black
+outline, platform icons, role badges (crown for you, wrench for mods, diamond for
+VIPs, star for members), Twitch/Kick name colours and palette colours for YouTube,
+inline emotes. Channels, text size and how long lines stay up are in
+Settings → Chat; move and resize the box with Arrange. Sources → Chat → ⋯ has
+"Add test messages" for setting it up offline.
+
 ## Spotify now playing
 
 Sources → Spotify: a card with the album art, song and artist fades in when a

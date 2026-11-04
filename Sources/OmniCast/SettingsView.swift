@@ -6,6 +6,8 @@ struct SettingsView: View {
         TabView {
             RecordingSettingsView()
                 .tabItem { Label("Recording", systemImage: "record.circle") }
+            ChatSettingsView()
+                .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right") }
             DiscordSettingsView()
                 .tabItem { Label("Discord", systemImage: "person.2.wave.2") }
             VideoSettingsView()
