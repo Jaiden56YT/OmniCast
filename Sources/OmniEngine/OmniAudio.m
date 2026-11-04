@@ -676,6 +676,7 @@ struct au_host {
 	_Atomic int refs; /* the filter, plus the load while it's pending */
 	_Atomic bool ready;
 	bool show_when_ready;
+	bool warned; /* render failure logged once */
 	void *au;     /* AUAudioUnit, retained */
 	void *render; /* AURenderBlock, retained */
 	void *pull;   /* AURenderPullInputBlock, retained */
@@ -796,6 +797,11 @@ static void au_configure(struct au_host *h, AUAudioUnit *au)
 		return;
 	}
 	au.maximumFramesToRender = AU_MAX_FRAMES;
+	/* A bridged v2 Audio Unit's input bus starts disabled: without this its render
+	 * never pulls the mic, so effects output silence (Apple's own units return
+	 * kAudioUnitErr_NoConnection) and the mic went quiet as soon as one loaded. */
+	au.inputBusses[0].enabled = YES;
+	au.outputBusses[0].enabled = YES;
 
 	NSData *saved = [NSData dataWithContentsOfFile:state_path(h->which)];
 	if (saved) {
@@ -909,12 +915,18 @@ static struct obs_audio_data *au_filter_audio(void *data, struct obs_audio_data 
 			.mFlags = kAudioTimeStampSampleTimeValid | kAudioTimeStampHostTimeValid,
 		};
 		AudioUnitRenderActionFlags flags = 0;
-		if (render(&flags, &ts, n, 0, out, pull) == noErr) {
+		AUAudioUnitStatus status = render(&flags, &ts, n, 0, out, pull);
+		if (status == noErr) {
 			for (int c = 0; c < 2; c++) {
 				const float *src = out->mBuffers[c < (int)out->mNumberBuffers ? c : 0].mData;
 				if (src && src != planes[c] + done)
 					memcpy(planes[c] + done, src, n * sizeof(float));
 			}
+		} else if (!h->warned) {
+			/* The mic passes through untouched rather than going silent. */
+			h->warned = true;
+			blog(LOG_WARNING, "[OmniCast] %s render failed (%d); passing the mic through",
+			     plugin_ids[h->which].name, (int)status);
 		}
 		h->sample_time += n;
 		done += n;
