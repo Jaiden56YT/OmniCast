@@ -191,6 +191,15 @@ int omni_monitor_devices(omni_audio_device *out, int max);
 /* Device UID, or "" to follow the system default output. */
 void omni_monitor_set_device(const char *uid);
 
+/* Virtual mic: plays the mic (after the plugins, at its stream level, silent while
+ * muted on stream) into a loopback device, so Discord or any other app can pick
+ * that device's input as its microphone. The devices offered are virtual ones with
+ * both an output and an input (Pro Tools Audio Bridge, Steam Streaming Microphone,
+ * BlackHole...). */
+int omni_virtual_mic_devices(omni_audio_device *out, int max);
+/* Device UID, or "" for off. Returns whether the output is running. */
+bool omni_virtual_mic_set_device(const char *uid);
+
 /* Which input of the mic's device is the mic. Interfaces such as the Volt 2 have
  * two inputs; the chosen one is sent to both sides, before the plugins. */
 typedef enum {

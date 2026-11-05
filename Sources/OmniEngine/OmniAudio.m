@@ -128,11 +128,34 @@ static void tempo_feed(const float *l, const float *r, uint32_t frames)
 	}
 }
 
+/* Virtual mic: the mic alone, played into a loopback device (e.g. Pro Tools Audio
+ * Bridge or Steam Streaming Microphone) whose input Discord or any app can pick as
+ * its microphone. Off while vmic.uid is "". */
+static struct ring vmic_ring;
+static struct {
+	AudioUnit unit;
+	char uid[256];
+} vmic;
+
+static void ring_write(struct ring *r, const float *l, const float *rr, uint32_t frames)
+{
+	if (!atomic_load_explicit(&r->active, memory_order_acquire))
+		return;
+	uint64_t w = atomic_load_explicit(&r->write_pos, memory_order_relaxed);
+	uint64_t rd = atomic_load_explicit(&r->read_pos, memory_order_acquire);
+	if (w - rd + frames > RING_FRAMES)
+		return; /* output stalled; drop rather than overwrite what it's reading */
+	for (uint32_t i = 0; i < frames; i++) {
+		size_t at = (size_t)((w + i) % RING_FRAMES);
+		r->buf[0][at] = l[i];
+		r->buf[1][at] = rr[i];
+	}
+	atomic_store_explicit(&r->write_pos, w + frames, memory_order_release);
+}
+
 /* OBS calls this with each channel's audio after its filters, before its volume. */
 static void on_channel_audio(void *param, obs_source_t *source, const struct audio_data *audio, bool muted)
 {
-	UNUSED_PARAMETER(source);
-	UNUSED_PARAMETER(muted);
 	struct ring *r = param;
 	const float *l = (const float *)audio->data[0];
 	const float *rr = audio->data[1] ? (const float *)audio->data[1] : l;
@@ -151,18 +174,67 @@ static void on_channel_audio(void *param, obs_source_t *source, const struct aud
 	store_peak(&r->peak[1], pr);
 	atomic_store_explicit(&r->last, fmaxf(pl, pr), memory_order_relaxed);
 
-	if (!atomic_load_explicit(&r->active, memory_order_acquire))
-		return;
-	uint64_t w = atomic_load_explicit(&r->write_pos, memory_order_relaxed);
-	uint64_t rd = atomic_load_explicit(&r->read_pos, memory_order_acquire);
-	if (w - rd + frames > RING_FRAMES)
-		return; /* output stalled; drop rather than overwrite what it's reading */
-	for (uint32_t i = 0; i < frames; i++) {
-		size_t at = (size_t)((w + i) % RING_FRAMES);
-		r->buf[0][at] = l[i];
-		r->buf[1][at] = rr[i];
+	ring_write(r, l, rr, frames);
+
+	/* The virtual mic gets the mic as the stream hears it: after the plugins, at
+	 * the stream fader, silent while the mic is muted on stream. */
+	if (r == &rings[OMNI_CHANNEL_MIC] && atomic_load_explicit(&vmic_ring.active, memory_order_acquire)) {
+		atomic_store_explicit(&vmic_ring.gain, muted ? 0.0f : obs_source_get_volume(source),
+				      memory_order_relaxed);
+		ring_write(&vmic_ring, l, rr, frames);
 	}
-	atomic_store_explicit(&r->write_pos, w + frames, memory_order_release);
+}
+
+/* Adds what the ring has (up to frames) into out at the ring's gain. Output thread
+ * only. Returns false when it added nothing audible. */
+static bool ring_mix(struct ring *r, float *out[2], UInt32 frames)
+{
+	if (!atomic_load_explicit(&r->active, memory_order_acquire))
+		return false;
+	uint64_t w = atomic_load_explicit(&r->write_pos, memory_order_acquire);
+	uint64_t rd = atomic_load_explicit(&r->read_pos, memory_order_relaxed);
+	if (atomic_exchange_explicit(&r->flush, false, memory_order_relaxed)) {
+		rd = w;
+		r->primed = false;
+		r->cur_gain = 0;
+	}
+	uint64_t avail = w - rd;
+	if (!r->primed) {
+		if (avail < PRIME_FRAMES) {
+			atomic_store_explicit(&r->read_pos, rd, memory_order_release);
+			return false;
+		}
+		r->primed = true;
+	}
+	if (avail > MAX_FILL) {
+		rd = w - TARGET_FRAMES;
+		avail = TARGET_FRAMES;
+	}
+	UInt32 n = avail < frames ? (UInt32)avail : frames;
+	float target = atomic_load_explicit(&r->gain, memory_order_relaxed);
+	float g = r->cur_gain, step = (target - g) / (float)(n ? n : 1);
+	bool audible = g > 0 || target > 0;
+	if (audible) {
+		for (UInt32 i = 0; i < n; i++, g += step) {
+			size_t at = (size_t)((rd + i) % RING_FRAMES);
+			out[0][i] += r->buf[0][at] * g;
+			if (out[1])
+				out[1][i] += r->buf[1][at] * g;
+		}
+	}
+	r->cur_gain = target;
+	atomic_store_explicit(&r->read_pos, rd + n, memory_order_release);
+	if (n < frames)
+		r->primed = false; /* underrun: wait for a little buffer again */
+	return audible;
+}
+
+static void clear_output(AudioBufferList *io, float *out[2])
+{
+	for (UInt32 b = 0; b < io->mNumberBuffers; b++)
+		memset(io->mBuffers[b].mData, 0, io->mBuffers[b].mDataByteSize);
+	out[0] = io->mBuffers[0].mData;
+	out[1] = io->mNumberBuffers > 1 ? io->mBuffers[1].mData : NULL;
 }
 
 static OSStatus monitor_render(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus,
@@ -171,52 +243,27 @@ static OSStatus monitor_render(void *ref, AudioUnitRenderActionFlags *flags, con
 	UNUSED_PARAMETER(ref);
 	UNUSED_PARAMETER(ts);
 	UNUSED_PARAMETER(bus);
-	float *out[2] = {io->mBuffers[0].mData, io->mNumberBuffers > 1 ? io->mBuffers[1].mData : NULL};
-	for (UInt32 b = 0; b < io->mNumberBuffers; b++)
-		memset(io->mBuffers[b].mData, 0, io->mBuffers[b].mDataByteSize);
+	float *out[2];
+	clear_output(io, out);
 	bool silent = true;
-
 	for (int c = 0; c < MAX_CH; c++) {
-		struct ring *r = &rings[c];
-		if (!atomic_load_explicit(&r->active, memory_order_acquire))
-			continue;
-		uint64_t w = atomic_load_explicit(&r->write_pos, memory_order_acquire);
-		uint64_t rd = atomic_load_explicit(&r->read_pos, memory_order_relaxed);
-		if (atomic_exchange_explicit(&r->flush, false, memory_order_relaxed)) {
-			rd = w;
-			r->primed = false;
-			r->cur_gain = 0;
-		}
-		uint64_t avail = w - rd;
-		if (!r->primed) {
-			if (avail < PRIME_FRAMES) {
-				atomic_store_explicit(&r->read_pos, rd, memory_order_release);
-				continue;
-			}
-			r->primed = true;
-		}
-		if (avail > MAX_FILL) {
-			rd = w - TARGET_FRAMES;
-			avail = TARGET_FRAMES;
-		}
-		UInt32 n = avail < frames ? (UInt32)avail : frames;
-		float target = atomic_load_explicit(&r->gain, memory_order_relaxed);
-		float g = r->cur_gain, step = (target - g) / (float)(n ? n : 1);
-		if (g > 0 || target > 0) {
+		if (ring_mix(&rings[c], out, frames))
 			silent = false;
-			for (UInt32 i = 0; i < n; i++, g += step) {
-				size_t at = (size_t)((rd + i) % RING_FRAMES);
-				out[0][i] += r->buf[0][at] * g;
-				if (out[1])
-					out[1][i] += r->buf[1][at] * g;
-			}
-		}
-		r->cur_gain = target;
-		atomic_store_explicit(&r->read_pos, rd + n, memory_order_release);
-		if (n < frames)
-			r->primed = false; /* underrun: wait for a little buffer again */
 	}
 	if (silent)
+		*flags |= kAudioUnitRenderAction_OutputIsSilence;
+	return noErr;
+}
+
+static OSStatus vmic_render(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus,
+			    UInt32 frames, AudioBufferList *io)
+{
+	UNUSED_PARAMETER(ref);
+	UNUSED_PARAMETER(ts);
+	UNUSED_PARAMETER(bus);
+	float *out[2];
+	clear_output(io, out);
+	if (!ring_mix(&vmic_ring, out, frames))
 		*flags |= kAudioUnitRenderAction_OutputIsSilence;
 	return noErr;
 }
@@ -233,46 +280,39 @@ static AudioDeviceID device_for_uid(const char *uid)
 	return dev;
 }
 
-static void monitor_stop(void)
+static void output_close(AudioUnit *unit)
 {
-	if (!monitor.unit)
+	if (!*unit)
 		return;
-	AudioOutputUnitStop(monitor.unit);
-	AudioUnitUninitialize(monitor.unit);
-	AudioComponentInstanceDispose(monitor.unit);
-	monitor.unit = NULL;
+	AudioOutputUnitStop(*unit);
+	AudioUnitUninitialize(*unit);
+	AudioComponentInstanceDispose(*unit);
+	*unit = NULL;
 }
 
-/* "" follows the system default output (the DefaultOutput unit tracks changes by
- * itself); a UID pins one device. */
-static void monitor_start(void)
+/* Opens an output unit that pulls 48 kHz stereo float (OBS's own format; the unit
+ * converts to the device's rate) from render. dev = kAudioObjectUnknown follows
+ * the system default output (the DefaultOutput unit tracks changes by itself). */
+static OSStatus output_open(AudioDeviceID dev, AURenderCallback render, AudioUnit *unit)
 {
-	monitor_stop();
-	bool follow_default = monitor.uid[0] == 0;
-	AudioDeviceID dev = kAudioObjectUnknown;
-	if (!follow_default) {
-		dev = device_for_uid(monitor.uid);
-		if (dev == kAudioObjectUnknown) {
-			blog(LOG_WARNING, "[OmniCast] Monitor device %s is gone, using the default output", monitor.uid);
-			follow_default = true;
-		}
-	}
-
+	bool follow_default = dev == kAudioObjectUnknown;
 	AudioComponentDescription desc = {
 		.componentType = kAudioUnitType_Output,
 		.componentSubType = follow_default ? kAudioUnitSubType_DefaultOutput : kAudioUnitSubType_HALOutput,
 		.componentManufacturer = kAudioUnitManufacturer_Apple,
 	};
 	AudioComponent comp = AudioComponentFindNext(NULL, &desc);
-	if (!comp || AudioComponentInstanceNew(comp, &monitor.unit) != noErr) {
-		monitor.unit = NULL;
-		return;
+	if (!comp)
+		return kAudioUnitErr_InvalidElement;
+	OSStatus st = AudioComponentInstanceNew(comp, unit);
+	if (st != noErr) {
+		*unit = NULL;
+		return st;
 	}
 	if (!follow_default)
-		AudioUnitSetProperty(monitor.unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-				     &dev, sizeof(dev));
+		st = AudioUnitSetProperty(*unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+					  &dev, sizeof(dev));
 
-	/* OBS's own format; the output unit converts to the device's rate. */
 	AudioStreamBasicDescription fmt = {
 		.mSampleRate = 48000,
 		.mFormatID = kAudioFormatLinearPCM,
@@ -283,26 +323,83 @@ static void monitor_start(void)
 		.mChannelsPerFrame = 2,
 		.mBitsPerChannel = 32,
 	};
-	AURenderCallbackStruct cb = {.inputProc = monitor_render};
-	OSStatus st = AudioUnitSetProperty(monitor.unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0,
-					   &fmt, sizeof(fmt));
+	AURenderCallbackStruct cb = {.inputProc = render};
 	if (st == noErr)
-		st = AudioUnitSetProperty(monitor.unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input,
-					  0, &cb, sizeof(cb));
+		st = AudioUnitSetProperty(*unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &fmt,
+					  sizeof(fmt));
 	if (st == noErr)
-		st = AudioUnitInitialize(monitor.unit);
+		st = AudioUnitSetProperty(*unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb,
+					  sizeof(cb));
 	if (st == noErr)
-		st = AudioOutputUnitStart(monitor.unit);
+		st = AudioUnitInitialize(*unit);
+	if (st == noErr)
+		st = AudioOutputUnitStart(*unit);
+	if (st != noErr)
+		output_close(unit);
+	return st;
+}
+
+static void monitor_stop(void)
+{
+	output_close(&monitor.unit);
+}
+
+/* "" follows the system default output; a UID pins one device. */
+static void monitor_start(void)
+{
+	monitor_stop();
+	AudioDeviceID dev = kAudioObjectUnknown;
+	if (monitor.uid[0]) {
+		dev = device_for_uid(monitor.uid);
+		if (dev == kAudioObjectUnknown)
+			blog(LOG_WARNING, "[OmniCast] Monitor device %s is gone, using the default output", monitor.uid);
+	}
+	OSStatus st = output_open(dev, monitor_render, &monitor.unit);
 	if (st != noErr) {
 		blog(LOG_WARNING, "[OmniCast] Monitor output failed to start (%d)", (int)st);
-		monitor_stop();
 		return;
 	}
 	for (int c = 0; c < MAX_CH; c++)
 		atomic_store(&rings[c].flush, true);
 }
 
-int omni_monitor_devices(omni_audio_device *out, int max)
+static void vmic_stop(void)
+{
+	atomic_store_explicit(&vmic_ring.active, false, memory_order_release);
+	output_close(&vmic.unit);
+}
+
+static void vmic_start(void)
+{
+	vmic_stop();
+	if (!vmic.uid[0])
+		return;
+	AudioDeviceID dev = device_for_uid(vmic.uid);
+	if (dev == kAudioObjectUnknown) {
+		blog(LOG_WARNING, "[OmniCast] Virtual mic device %s is gone", vmic.uid);
+		return;
+	}
+	atomic_store(&vmic_ring.flush, true);
+	atomic_store_explicit(&vmic_ring.active, true, memory_order_release);
+	OSStatus st = output_open(dev, vmic_render, &vmic.unit);
+	if (st != noErr) {
+		blog(LOG_WARNING, "[OmniCast] Virtual mic output failed to start (%d)", (int)st);
+		vmic_stop();
+		return;
+	}
+	blog(LOG_INFO, "[OmniCast] Virtual mic is playing into %s", vmic.uid);
+}
+
+static bool has_streams(AudioDeviceID dev, AudioObjectPropertyScope scope)
+{
+	AudioObjectPropertyAddress a = {kAudioDevicePropertyStreams, scope, kAudioObjectPropertyElementMain};
+	UInt32 size = 0;
+	return AudioObjectGetPropertyDataSize(dev, &a, 0, NULL, &size) == noErr && size > 0;
+}
+
+/* Output devices, or with loopback_only, virtual devices that also have an input
+ * (what's played into them comes back out of their input). */
+static int list_devices(omni_audio_device *out, int max, bool loopback_only)
 {
 	AudioObjectPropertyAddress a = {kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal,
 					kAudioObjectPropertyElementMain};
@@ -313,13 +410,24 @@ int omni_monitor_devices(omni_audio_device *out, int max)
 	AudioDeviceID *ids = calloc(count, sizeof(AudioDeviceID));
 	AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, NULL, &size, ids);
 
+	/* Virtual devices with an input and an output that are not loopbacks: each only
+	 * carries audio while its own app drives it (measured: playing into them gives
+	 * silence on their input). */
+	static const char *not_loopback[] = {"Pro Tools Audio Bridge", "SteamStreaming", "zoom.us.", "WaveLink"};
+
 	int n = 0;
 	for (UInt32 i = 0; i < count && n < max; i++) {
-		AudioObjectPropertyAddress streams = {kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput,
-						      kAudioObjectPropertyElementMain};
-		UInt32 ssize = 0;
-		if (AudioObjectGetPropertyDataSize(ids[i], &streams, 0, NULL, &ssize) != noErr || ssize == 0)
+		if (!has_streams(ids[i], kAudioObjectPropertyScopeOutput))
 			continue;
+		if (loopback_only) {
+			UInt32 transport = 0, tlen = sizeof(transport);
+			AudioObjectPropertyAddress pt = {kAudioDevicePropertyTransportType,
+							 kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+			AudioObjectGetPropertyData(ids[i], &pt, 0, NULL, &tlen, &transport);
+			if (transport != kAudioDeviceTransportTypeVirtual ||
+			    !has_streams(ids[i], kAudioObjectPropertyScopeInput))
+				continue;
+		}
 		CFStringRef uid = NULL, name = NULL;
 		UInt32 len = sizeof(CFStringRef);
 		AudioObjectPropertyAddress pu = {kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal,
@@ -332,7 +440,11 @@ int omni_monitor_devices(omni_audio_device *out, int max)
 		if (uid && name) {
 			CFStringGetCString(uid, out[n].uid, sizeof(out[n].uid), kCFStringEncodingUTF8);
 			CFStringGetCString(name, out[n].name, sizeof(out[n].name), kCFStringEncodingUTF8);
-			n++;
+			bool skip = false;
+			for (size_t k = 0; loopback_only && k < sizeof(not_loopback) / sizeof(*not_loopback); k++)
+				skip |= strncmp(out[n].uid, not_loopback[k], strlen(not_loopback[k])) == 0;
+			if (!skip)
+				n++;
 		}
 		if (uid)
 			CFRelease(uid);
@@ -343,12 +455,31 @@ int omni_monitor_devices(omni_audio_device *out, int max)
 	return n;
 }
 
+int omni_monitor_devices(omni_audio_device *out, int max)
+{
+	return list_devices(out, max, false);
+}
+
 void omni_monitor_set_device(const char *uid)
 {
 	if (strcmp(uid, monitor.uid) == 0 && monitor.unit)
 		return;
 	snprintf(monitor.uid, sizeof(monitor.uid), "%s", uid);
 	monitor_start();
+}
+
+int omni_virtual_mic_devices(omni_audio_device *out, int max)
+{
+	return list_devices(out, max, true);
+}
+
+bool omni_virtual_mic_set_device(const char *uid)
+{
+	if (strcmp(uid, vmic.uid) != 0 || (uid[0] && !vmic.unit)) {
+		snprintf(vmic.uid, sizeof(vmic.uid), "%s", uid);
+		vmic_start();
+	}
+	return vmic.unit != NULL;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1452,6 +1583,7 @@ void omni_audio_start(const char *config_dir, obs_source_t *mic, obs_source_t *s
 	if (system)
 		attach_channel(OMNI_CHANNEL_SYSTEM, system);
 	monitor_start();
+	vmic_start();
 }
 
 void omni_audio_stop(void)
@@ -1472,4 +1604,5 @@ void omni_audio_stop(void)
 	}
 	mic_source = NULL;
 	monitor_stop();
+	vmic_stop();
 }

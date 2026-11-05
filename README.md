@@ -131,6 +131,19 @@ the Discord app on this Mac over its local RPC socket (regular, Canary and PTB),
 follows whichever one you're in a call on, and keeps the secret and token in the
 keychain.
 
+## Your mic in Discord
+
+Mic → FX → **Use in Discord** plays your mic, with STACKS and Muze, into a
+loopback audio device. In Discord, set Settings → Voice & Video → Input Device
+to that same device. Discord then gets the same mic the stream hears: it follows
+the mic's Stream fader and goes silent when the mic is muted on stream.
+
+This needs a loopback device. Install BlackHole 2ch once (`brew install --cask
+blackhole-2ch`, which asks for your password) and pick it here. Pro Tools Audio
+Bridge, Steam Streaming Microphone and Zoom's device aren't offered, because they
+only carry audio while their own app drives them. Turn off Discord's noise
+suppression (Krisp) if it smears the harmonies.
+
 ## Virtual camera
 
 Controls → Virtual Camera sends one canvas, 16:9 **or** 9:16, to the

@@ -46,6 +46,26 @@ final class Mixer {
         }
     }
 
+    /// Loopback device the mic is played into for Discord (or any app), "" for off.
+    var virtualMicDevice: String = UserDefaults.standard.string(forKey: "virtualMicDevice") ?? "" {
+        didSet {
+            UserDefaults.standard.set(virtualMicDevice, forKey: "virtualMicDevice")
+            applyVirtualMic()
+        }
+    }
+    var virtualMicName: String = UserDefaults.standard.string(forKey: "virtualMicName") ?? "" {
+        didSet { UserDefaults.standard.set(virtualMicName, forKey: "virtualMicName") }
+    }
+    /// False when the picked device is gone or wouldn't start.
+    private(set) var virtualMicRunning = false
+
+    private var started = false
+
+    func applyVirtualMic() {
+        guard started else { return }
+        virtualMicRunning = omni_virtual_mic_set_device(virtualMicDevice)
+    }
+
     var micInput: Int = UserDefaults.standard.object(forKey: "micInput") as? Int ?? 0 {
         didSet {
             UserDefaults.standard.set(micInput, forKey: "micInput")
@@ -85,6 +105,8 @@ final class Mixer {
         channels.forEach(push)
         MusicSync.shared.applySource()
         omni_monitor_set_device(monitorDevice)
+        started = true
+        applyVirtualMic()
         omni_mic_set_input(omni_mic_input(rawValue: UInt32(micInput)))
         for (p, on) in pluginsOn.enumerated() where on {
             omni_plugin_set_enabled(omni_plugin(rawValue: UInt32(p)), true)
@@ -328,15 +350,64 @@ struct MonitorPicker: View {
         .onHover { if $0 { load() } }
     }
 
-    private func load() {
-        var buf = [omni_audio_device](repeating: omni_audio_device(), count: 32)
-        let n = Int(omni_monitor_devices(&buf, Int32(buf.count)))
-        devices = buf.prefix(n).map { d in
-            var d = d
-            let uid = withUnsafeBytes(of: &d.uid) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
-            let name = withUnsafeBytes(of: &d.name) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
-            return (uid, name)
+    private func load() { devices = audioDevices(omni_monitor_devices) }
+}
+
+/// Reads an engine device list (output devices, or loopback devices for the virtual mic).
+func audioDevices(_ list: (UnsafeMutablePointer<omni_audio_device>?, Int32) -> Int32) -> [(uid: String, name: String)] {
+    var buf = [omni_audio_device](repeating: omni_audio_device(), count: 32)
+    let n = Int(list(&buf, Int32(buf.count)))
+    return buf.prefix(n).map { d in
+        var d = d
+        let uid = withUnsafeBytes(of: &d.uid) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+        let name = withUnsafeBytes(of: &d.name) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
+        return (uid, name)
+    }
+}
+
+/// Plays the mic, plugins and all, into a loopback device that Discord (or any app)
+/// then uses as its microphone.
+struct VirtualMicControls: View {
+    @State private var devices: [(uid: String, name: String)] = []
+    private var mixer: Mixer { .shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("", selection: Binding(get: { mixer.virtualMicDevice }, set: { uid in
+                mixer.virtualMicName = devices.first { $0.uid == uid }?.name ?? ""
+                mixer.virtualMicDevice = uid
+            })) {
+                Text("Off").tag("")
+                ForEach(devices, id: \.uid) { Text($0.name).tag($0.uid) }
+                if !mixer.virtualMicDevice.isEmpty && !devices.contains(where: { $0.uid == mixer.virtualMicDevice }) {
+                    Text("\(mixer.virtualMicName) (not found)").tag(mixer.virtualMicDevice)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            Text(status)
+                .font(.system(size: 10))
+                .foregroundStyle(mixer.virtualMicRunning ? Theme.good : Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
+        .help("Sends your mic as the stream hears it (after the plugins, at the Stream level) to this device. Pick the same device as the input in Discord.")
+        .onAppear(perform: load)
+    }
+
+    private var status: String {
+        if devices.isEmpty && mixer.virtualMicDevice.isEmpty {
+            return "Needs a loopback audio device such as BlackHole 2ch"
+        }
+        if mixer.virtualMicDevice.isEmpty { return "Off" }
+        if !mixer.virtualMicRunning { return "Couldn't start \(mixer.virtualMicName)" }
+        return "In Discord: Settings → Voice & Video → Input Device → \(mixer.virtualMicName)"
+    }
+
+    private func load() {
+        devices = audioDevices(omni_virtual_mic_devices)
+        // A device that came back since the last try starts again.
+        if !mixer.virtualMicDevice.isEmpty && !mixer.virtualMicRunning { mixer.applyVirtualMic() }
     }
 }
 
@@ -412,6 +483,9 @@ struct MicSettings: View {
             }
             Text("Turned-off plugins aren't loaded at all.")
                 .font(.system(size: 10)).foregroundStyle(Theme.textDim)
+
+            Text("Use in Discord").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
+            VirtualMicControls()
 
             Text("Match Spotify").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
             MusicSyncControls()
