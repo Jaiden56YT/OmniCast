@@ -210,6 +210,21 @@ typedef enum {
 } omni_plugin;
 
 bool omni_plugin_installed(omni_plugin plugin);
+
+/* Music follow: runs Muze Auto Key on a mixer channel (e.g. Spotify) so Muze,
+ * set to Key Link: Follow, takes that music's key, and tracks the channel's beat
+ * so its tempo can be given to Muze. -1 stops. */
+void omni_music_follow(int channel);
+bool omni_music_auto_key_installed(void);
+/* The followed channel's tempo in BPM from the last ~11 s, or 0 when unsure;
+ * confidence is higher for a clearer beat. */
+double omni_music_tempo(double *confidence);
+/* Forget the beat history (on a song change). */
+void omni_music_tempo_reset(void);
+/* Tempo the plugins see as the host's. */
+void omni_music_set_tempo(double bpm);
+/* Muze's current key and scale, e.g. "A Natural Minor"; false if Muze isn't loaded. */
+bool omni_music_muze_key(char *out, size_t len);
 void omni_plugin_set_enabled(omni_plugin plugin, bool enabled);
 /* Opens the plugin's own window; it opens once the plugin has loaded. */
 void omni_plugin_show_editor(omni_plugin plugin);

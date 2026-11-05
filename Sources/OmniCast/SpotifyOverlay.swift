@@ -101,6 +101,7 @@ final class SpotifyOverlay {
                         artist: info["Artist"] as? String ?? "",
                         playing: playing)
         let resumed = playing && track?.playing == false
+        if new.id != track?.id { MusicSync.shared.songChanged() }
         track = new
         guard enabled else { return }
         if !playing {

@@ -86,6 +86,22 @@ Settings → Accounts, with a free developer app you register yourself:
 Sign-ins use a loopback-only redirect (never reachable from the network) and
 PKCE; tokens and secrets live in the keychain and refresh on their own.
 
+## Muze follows Spotify
+
+Mic → FX → "Muze follows Spotify's key and tempo" (on by default):
+
+- **Key**: Muze Auto Key runs on the Spotify channel and publishes the song's key;
+  Muze (Key Link: Follow) retunes to it. Needs Muze Auto Key installed.
+- **Tempo**: OmniCast tracks the Spotify channel's beat (onsets in three bands,
+  autocorrelation scored as a comb over 1–4 beats so syncopation like dembow
+  isn't read as 4/3 tempo) and gives it to Muze as the host tempo, so its
+  tempo-synced harmony, delay and LFOs lock to the song. It resets on each song
+  and only moves Muze's tempo for changes of about a BPM or more.
+
+Spotify's own tempo/key data isn't available to new apps (its API closed that
+in 2024), so this listens to the audio instead. Very fast songs (~170+) can be
+read wrong.
+
 ## Spotify now playing
 
 Sources → Spotify: a card with the album art, song and artist fades in when a

@@ -83,6 +83,7 @@ final class Mixer {
             if i >= 0 { indices[ch.id] = i }
         }
         channels.forEach(push)
+        MusicSync.shared.applySource()
         omni_monitor_set_device(monitorDevice)
         omni_mic_set_input(omni_mic_input(rawValue: UInt32(micInput)))
         for (p, on) in pluginsOn.enumerated() where on {
@@ -140,12 +141,14 @@ final class Mixer {
         channels.append(ch)
         push(ch)
         save()
+        MusicSync.shared.applySource()
     }
 
     func remove(_ id: String) {
         if let i = indices.removeValue(forKey: id) { omni_mixer_remove_app(i) }
         channels.removeAll { $0.id == id }
         save()
+        MusicSync.shared.applySource()
     }
 
     func setPlugin(_ p: Int, on: Bool) {
@@ -409,6 +412,9 @@ struct MicSettings: View {
             }
             Text("Turned-off plugins aren't loaded at all.")
                 .font(.system(size: 10)).foregroundStyle(Theme.textDim)
+
+            Text("Match Spotify").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
+            MusicSyncControls()
         }
         .padding(12)
         .frame(width: 230)
@@ -469,5 +475,36 @@ final class MeterHold {
         last = date
         shown = (max(l, shown.0 - fall), max(r, shown.1 - fall))
         return shown
+    }
+}
+
+/// Muze follows the key and tempo of what's playing on Spotify.
+struct MusicSyncControls: View {
+    @Bindable private var sync = MusicSync.shared
+    private var mixer: Mixer { .shared }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Muze follows Spotify's key and tempo", isOn: $sync.enabled)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 11))
+                .disabled(!sync.autoKeyInstalled)
+            Text(status)
+                .font(.system(size: 10))
+                .foregroundStyle(sync.following && sync.bpm != nil ? Theme.good : Theme.textDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .help("Muze Auto Key listens to the Spotify channel and sends its key to Muze (Key Link: Follow); OmniCast tracks the beat and gives Muze the tempo.")
+    }
+
+    private var status: String {
+        if !sync.autoKeyInstalled { return "Needs Muze Auto Key installed" }
+        if !sync.enabled { return "Off" }
+        if !sync.following { return "Give Spotify a channel with + in the mixer" }
+        if !mixer.pluginsOn[1] { return "Turn Muze on above" }
+        let key = sync.key ?? "listening…"
+        let tempo = sync.bpm.map { "\(Int($0.rounded())) BPM" } ?? "finding the beat…"
+        return "\(key) · \(tempo)"
     }
 }

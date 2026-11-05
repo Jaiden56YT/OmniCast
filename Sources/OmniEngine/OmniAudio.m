@@ -79,6 +79,55 @@ static void store_peak(_Atomic float *p, float v)
 		atomic_store_explicit(p, v, memory_order_relaxed);
 }
 
+/* Tempo tracking for the followed music channel. The audio thread turns each
+ * 256-sample hop into an onset value (rises in low, full and high band energy);
+ * omni_music_tempo finds the beat period in the last ~11 s of them. */
+#define TEMPO_HOP 256
+#define TEMPO_LEN 2048
+
+static struct {
+	_Atomic int channel;
+	_Atomic bool reset;
+	float acc[3];
+	int fill;
+	float low, mid; /* one-pole lowpass states */
+	float prev[3];
+	float env[TEMPO_LEN];
+	_Atomic uint32_t written;
+} tempo = {.channel = -1};
+
+static void tempo_feed(const float *l, const float *r, uint32_t frames)
+{
+	if (atomic_exchange_explicit(&tempo.reset, false, memory_order_acquire)) {
+		tempo.fill = 0;
+		atomic_store_explicit(&tempo.written, 0, memory_order_release);
+	}
+	const float a_low = 0.0194f; /* ~150 Hz: kick and bass */
+	const float a_mid = 0.2300f; /* ~2 kHz: what's above is hats and snare snap */
+	for (uint32_t i = 0; i < frames; i++) {
+		float x = 0.5f * (l[i] + r[i]);
+		tempo.low += a_low * (x - tempo.low);
+		tempo.mid += a_mid * (x - tempo.mid);
+		float high = x - tempo.mid;
+		tempo.acc[0] += tempo.low * tempo.low;
+		tempo.acc[1] += x * x;
+		tempo.acc[2] += high * high;
+		if (++tempo.fill < TEMPO_HOP)
+			continue;
+		float onset = 0;
+		for (int b = 0; b < 3; b++) {
+			float e = logf(tempo.acc[b] + 1e-7f);
+			onset += fmaxf(0, e - tempo.prev[b]);
+			tempo.prev[b] = e;
+			tempo.acc[b] = 0;
+		}
+		tempo.fill = 0;
+		uint32_t w = atomic_load_explicit(&tempo.written, memory_order_relaxed);
+		tempo.env[w % TEMPO_LEN] = onset;
+		atomic_store_explicit(&tempo.written, w + 1, memory_order_release);
+	}
+}
+
 /* OBS calls this with each channel's audio after its filters, before its volume. */
 static void on_channel_audio(void *param, obs_source_t *source, const struct audio_data *audio, bool muted)
 {
@@ -90,6 +139,8 @@ static void on_channel_audio(void *param, obs_source_t *source, const struct aud
 	uint32_t frames = audio->frames;
 	if (!l || !frames)
 		return;
+	if (r - rings == atomic_load_explicit(&tempo.channel, memory_order_relaxed))
+		tempo_feed(l, rr, frames);
 
 	float pl = 0, pr = 0;
 	for (uint32_t i = 0; i < frames; i++) {
@@ -665,13 +716,20 @@ void omni_mic_set_input(omni_mic_input input)
 
 #define AU_MAX_FRAMES 4096
 
+/* Not a mic plugin: runs on the music channel and publishes its key to Muze. */
+#define PLUGIN_AUTO_KEY OMNI_PLUGIN_COUNT
+
 static const struct {
 	const char *name;
 	OSType type, subtype, manufacturer;
-} plugin_ids[OMNI_PLUGIN_COUNT] = {
+} plugin_ids[OMNI_PLUGIN_COUNT + 1] = {
 	[OMNI_PLUGIN_STACKS] = {"STACKS", 'aufx', 'Aio1', 'Shnc'},
 	[OMNI_PLUGIN_MUZE] = {"Muze", 'aumf', 'Vx02', 'Voxo'},
+	[PLUGIN_AUTO_KEY] = {"Muze Auto Key", 'aufx', 'Mzak', 'Voxo'},
 };
+
+/* Tempo given to plugins as the host's (Muze's synced harmony, delay, LFOs). */
+static _Atomic double host_tempo = 120.0;
 
 struct au_host {
 	omni_plugin which;
@@ -688,6 +746,7 @@ struct au_host {
 	float *in[2];
 	uint32_t in_offset;
 	double sample_time;
+	double beats; /* host beat position, advanced at host_tempo */
 	float out_buf[2][AU_MAX_FRAMES];
 };
 
@@ -705,14 +764,23 @@ static void au_host_release(struct au_host *h)
 {
 	if (atomic_fetch_sub(&h->refs, 1) != 1)
 		return;
-	AUAudioUnit *au = CFBridgingRelease(h->au);
-	[au deallocateRenderResources];
-	if (h->render)
-		CFRelease(h->render);
-	if (h->pull)
-		CFRelease(h->pull);
+	/* Disposing an Audio Unit tears down its UI too (Muze's is WebKit), which
+	 * must happen on the main thread. libobs destroys filters on its own task
+	 * thread; AudioToolbox then tries to hop to the main thread, times out while
+	 * the main thread waits on that same destruction (at quit), disposes here
+	 * anyway, and WebKit crashes. So the last release always goes to the main
+	 * queue. Nothing renders through h any more, so h itself can go now. */
+	void *au = h->au, *render = h->render, *pull = h->pull;
 	free(h->out);
 	bfree(h);
+	dispatch_async(dispatch_get_main_queue(), ^{
+		AUAudioUnit *unit = CFBridgingRelease(au);
+		[unit deallocateRenderResources];
+		if (render)
+			CFRelease(render);
+		if (pull)
+			CFRelease(pull);
+	});
 }
 
 static void au_save_state(struct au_host *h)
@@ -804,6 +872,39 @@ static void au_configure(struct au_host *h, AUAudioUnit *au)
 	 * kAudioUnitErr_NoConnection) and the mic went quiet as soon as one loaded. */
 	au.inputBusses[0].enabled = YES;
 	au.outputBusses[0].enabled = YES;
+	if (h->which == OMNI_PLUGIN_MUZE) {
+		/* Play as a host whose transport is running at host_tempo in 4/4, so Muze's
+		 * tempo-synced effects follow the music's BPM. Called on the audio thread. */
+		au.musicalContextBlock = ^BOOL(double *tempo, double *numerator, NSInteger *denominator, double *beat,
+					      NSInteger *offset_to_next_beat, double *downbeat) {
+			double bpm = atomic_load_explicit(&host_tempo, memory_order_relaxed);
+			if (tempo)
+				*tempo = bpm;
+			if (numerator)
+				*numerator = 4;
+			if (denominator)
+				*denominator = 4;
+			if (beat)
+				*beat = h->beats;
+			if (offset_to_next_beat)
+				*offset_to_next_beat = (NSInteger)((ceil(h->beats) - h->beats) * 60.0 / bpm * 48000.0);
+			if (downbeat)
+				*downbeat = floor(h->beats / 4) * 4;
+			return YES;
+		};
+		au.transportStateBlock = ^BOOL(AUHostTransportStateFlags *flags, double *sample, double *cycle_start,
+					      double *cycle_end) {
+			if (flags)
+				*flags = AUHostTransportStateMoving;
+			if (sample)
+				*sample = h->sample_time;
+			if (cycle_start)
+				*cycle_start = 0;
+			if (cycle_end)
+				*cycle_end = 0;
+			return YES;
+		};
+	}
 
 	NSData *saved = [NSData dataWithContentsOfFile:state_path(h->which)];
 	if (saved) {
@@ -931,6 +1032,7 @@ static struct obs_audio_data *au_filter_audio(void *data, struct obs_audio_data 
 			     plugin_ids[h->which].name, (int)status);
 		}
 		h->sample_time += n;
+		h->beats += n / 48000.0 * atomic_load_explicit(&host_tempo, memory_order_relaxed) / 60.0;
 		done += n;
 	}
 	return audio;
@@ -1014,6 +1116,9 @@ void omni_plugin_show_editor(omni_plugin p)
 
 static obs_source_t *channels[MAX_CH];
 static bool channel_owned[MAX_CH];
+/* Muze Auto Key, on the channel music follow is listening to. */
+static obs_source_t *key_filter;
+static obs_source_t *key_target;
 
 static void attach_channel(int c, obs_source_t *src)
 {
@@ -1062,6 +1167,8 @@ void omni_mixer_remove_app(int c)
 {
 	if (c <= OMNI_CHANNEL_SYSTEM || c >= MAX_CH || !channels[c] || !channel_owned[c])
 		return;
+	if (key_target == channels[c] || atomic_load(&tempo.channel) == c)
+		omni_music_follow(-1);
 	obs_source_t *src = channels[c];
 	detach_channel(c);
 	obs_set_output_source(APP_OUTPUT_BASE + c, NULL);
@@ -1092,6 +1199,167 @@ void omni_audio_detach_source(int c)
 	if (c <= OMNI_CHANNEL_SYSTEM || c >= MAX_CH || channel_owned[c])
 		return;
 	detach_channel(c);
+}
+
+void omni_music_follow(int c)
+{
+	if (key_filter && key_target)
+		obs_source_filter_remove(key_target, key_filter);
+	obs_source_release(key_filter);
+	key_filter = NULL;
+	key_target = NULL;
+	atomic_store(&tempo.channel, -1);
+	if (c <= OMNI_CHANNEL_SYSTEM || c >= MAX_CH || !channels[c])
+		return;
+	if (omni_music_auto_key_installed()) {
+		obs_data_t *s = obs_data_create();
+		obs_data_set_int(s, "plugin", PLUGIN_AUTO_KEY);
+		key_filter = obs_source_create_private("omni_au_filter", "Muze Auto Key", s);
+		obs_data_release(s);
+		if (key_filter) {
+			key_target = channels[c];
+			obs_source_filter_add(key_target, key_filter);
+		}
+	}
+	omni_music_tempo_reset();
+	atomic_store(&tempo.channel, c);
+}
+
+bool omni_music_auto_key_installed(void)
+{
+	AudioComponentDescription desc = {
+		.componentType = plugin_ids[PLUGIN_AUTO_KEY].type,
+		.componentSubType = plugin_ids[PLUGIN_AUTO_KEY].subtype,
+		.componentManufacturer = plugin_ids[PLUGIN_AUTO_KEY].manufacturer,
+	};
+	return AudioComponentFindNext(NULL, &desc) != NULL;
+}
+
+void omni_music_tempo_reset(void)
+{
+	atomic_store_explicit(&tempo.reset, true, memory_order_release);
+}
+
+/* Beat period by autocorrelation of the onset envelope, 60-190 BPM, scored as a
+ * comb over the period's multiples, with a gentle preference around 120 so
+ * half/double tempo don't win on a near tie. Checked against 90/100/128/140 BPM
+ * drums, 91/96 BPM dembow and a ~155 BPM song. */
+double omni_music_tempo(double *confidence)
+{
+	*confidence = 0;
+	uint32_t written = atomic_load_explicit(&tempo.written, memory_order_acquire);
+	int n = written < TEMPO_LEN ? (int)written : TEMPO_LEN;
+	if (n < 600) /* ~3 s */
+		return 0;
+	static float e[TEMPO_LEN];
+	double mean = 0;
+	for (int i = 0; i < n; i++) {
+		e[i] = tempo.env[(written - (uint32_t)n + (uint32_t)i) % TEMPO_LEN];
+		mean += e[i];
+	}
+	mean /= n;
+	/* Smooth over +-2 hops: a beat period that isn't a whole number of hops would
+	 * otherwise half-miss its own onsets and lose to a longer period that is
+	 * (a ~155 BPM song read as 77.6 without this). */
+	static float smooth[TEMPO_LEN];
+	static const float kernel[5] = {1, 2, 3, 2, 1};
+	for (int i = 0; i < n; i++) {
+		float acc = 0, weight = 0;
+		for (int j = -2; j <= 2; j++) {
+			if (i + j >= 0 && i + j < n) {
+				acc += kernel[j + 2] * e[i + j];
+				weight += kernel[j + 2];
+			}
+		}
+		smooth[i] = acc / weight;
+	}
+	memcpy(e, smooth, sizeof(float) * (size_t)n);
+	double energy = 0;
+	for (int i = 0; i < n; i++) {
+		e[i] -= (float)mean;
+		energy += e[i] * e[i];
+	}
+	if (energy < 1e-6)
+		return 0;
+
+	const double rate = 48000.0 / TEMPO_HOP;
+	int lo = (int)floor(rate * 60 / 190), hi = (int)ceil(rate * 60 / 60);
+	static double ac[1024];
+	int max_lag = n / 2 < 1024 ? n / 2 : 1023;
+	for (int lag = lo; lag <= max_lag; lag++) {
+		double sum = 0;
+		for (int i = lag; i < n; i++)
+			sum += e[i] * e[i - lag];
+		ac[lag] = sum / (n - lag);
+	}
+	int best = 0;
+	double best_score = 0, total = 0;
+	int count = 0;
+	for (int lag = lo; lag <= hi && lag < n / 2; lag++) {
+		double bpm = rate * 60 / lag;
+		double octave = log2(bpm / 120.0);
+		double prior = exp(-0.5 * octave * octave / 0.8);
+		/* Comb: the true beat repeats at 1, 2, 3 and 4 beats; a fake pulse from
+		 * syncopation (dembow's off-beat snares read as 4/3 of the tempo, ~121
+		 * for a 91 BPM reggaeton song) doesn't line up at the multiples. */
+		static const double weight[4] = {1.0, 0.8, 0.6, 0.5};
+		double score = 0, used = 0;
+		for (int k = 1; k <= 4 && k * lag <= max_lag; k++) {
+			score += weight[k - 1] * ac[k * lag];
+			used += weight[k - 1];
+		}
+		score = score / used * prior;
+		total += score;
+		count++;
+		if (score > best_score) {
+			best_score = score;
+			best = lag;
+		}
+	}
+	if (!best || best_score <= 0)
+		return 0;
+	/* Parabolic refinement between neighbouring lags. */
+	double lag = best;
+	if (best > lo && best < hi) {
+		double a = ac[best - 1], b = ac[best], c = ac[best + 1];
+		double denom = a - 2 * b + c;
+		if (fabs(denom) > 1e-12)
+			lag = best + 0.5 * (a - c) / denom;
+	}
+	*confidence = best_score / (fabs(total / count) + 1e-9);
+	return rate * 60 / lag;
+}
+
+void omni_music_set_tempo(double bpm)
+{
+	if (bpm >= 40 && bpm <= 300)
+		atomic_store_explicit(&host_tempo, bpm, memory_order_relaxed);
+}
+
+bool omni_music_muze_key(char *out, size_t len)
+{
+	if (!out || !len)
+		return false;
+	out[0] = 0;
+	obs_source_t *f = plugin_filters[OMNI_PLUGIN_MUZE];
+	struct au_host *h = f ? obs_obj_get_data(f) : NULL;
+	if (!h || !atomic_load(&h->ready))
+		return false;
+	AUAudioUnit *au = (__bridge AUAudioUnit *)h->au;
+	AUParameter *key = nil, *scale = nil;
+	for (AUParameter *p in au.parameterTree.allParameters) {
+		if ([p.displayName isEqualToString:@"Auto-Tune Key"])
+			key = p;
+		else if ([p.displayName isEqualToString:@"Auto-Tune Scale"])
+			scale = p;
+	}
+	if (!key || !scale || !key.valueStrings || !scale.valueStrings)
+		return false;
+	NSUInteger k = (NSUInteger)key.value, sc = (NSUInteger)scale.value;
+	if (k >= key.valueStrings.count || sc >= scale.valueStrings.count)
+		return false;
+	snprintf(out, len, "%s %s", key.valueStrings[k].UTF8String, scale.valueStrings[sc].UTF8String);
+	return true;
 }
 
 void omni_mixer_levels(int c, float *left_db, float *right_db)
@@ -1188,6 +1456,7 @@ void omni_audio_start(const char *config_dir, obs_source_t *mic, obs_source_t *s
 
 void omni_audio_stop(void)
 {
+	omni_music_follow(-1);
 	for (int p = 0; p < OMNI_PLUGIN_COUNT; p++)
 		unload_plugin((omni_plugin)p);
 	if (mic_input_source) {
