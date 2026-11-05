@@ -128,18 +128,19 @@ static void tempo_feed(const float *l, const float *r, uint32_t frames)
 	}
 }
 
-/* Virtual mic: played into a loopback device (e.g. BlackHole) whose input Discord
- * or any app can pick as its microphone. It carries the mic alone, or the stream
- * mix minus the excluded channels (Discord itself, so a call doesn't hear itself
- * back). Each channel it carries has a second ring, at that channel's stream level.
- * Off while vmic.uid is "". */
-static struct ring vrings[MAX_CH];
-static struct {
+/* Discord outputs, each played into a loopback device (e.g. BlackHole) that
+ * Discord picks: the voice output carries the mic, the stream output carries every
+ * other channel except the excluded ones (Discord itself, so a call doesn't hear
+ * itself back) for Go Live's audio device. Each channel an output carries has its
+ * own ring there, at the channel's stream level. An output is off while its uid
+ * is "". */
+struct vout {
+	struct ring rings[MAX_CH];
 	AudioUnit unit;
 	char uid[256];
-	omni_virtual_mic_mode mode;
-	uint32_t excluded;
-} vmic;
+};
+static struct vout vouts[OMNI_VIRTUAL_OUTPUT_COUNT];
+static uint32_t vout_excluded;
 
 static void ring_write(struct ring *r, const float *l, const float *rr, uint32_t frames)
 {
@@ -180,10 +181,12 @@ static void on_channel_audio(void *param, obs_source_t *source, const struct aud
 
 	ring_write(r, l, rr, frames);
 
-	/* The virtual mic gets the channel as the stream hears it: after the plugins,
-	 * at the stream fader, silent while muted on stream. */
-	struct ring *v = &vrings[r - rings];
-	if (atomic_load_explicit(&v->active, memory_order_acquire)) {
+	/* The Discord outputs get the channel as the stream hears it: after the
+	 * plugins, at the stream fader, silent while muted on stream. */
+	for (int o = 0; o < OMNI_VIRTUAL_OUTPUT_COUNT; o++) {
+		struct ring *v = &vouts[o].rings[r - rings];
+		if (!atomic_load_explicit(&v->active, memory_order_acquire))
+			continue;
 		atomic_store_explicit(&v->gain, muted ? 0.0f : obs_source_get_volume(source), memory_order_relaxed);
 		ring_write(v, l, rr, frames);
 	}
@@ -259,17 +262,17 @@ static OSStatus monitor_render(void *ref, AudioUnitRenderActionFlags *flags, con
 	return noErr;
 }
 
-static OSStatus vmic_render(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus,
+static OSStatus vout_render(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus,
 			    UInt32 frames, AudioBufferList *io)
 {
-	UNUSED_PARAMETER(ref);
+	struct vout *v = ref;
 	UNUSED_PARAMETER(ts);
 	UNUSED_PARAMETER(bus);
 	float *out[2];
 	clear_output(io, out);
 	bool silent = true;
 	for (int c = 0; c < MAX_CH; c++) {
-		if (ring_mix(&vrings[c], out, frames))
+		if (ring_mix(&v->rings[c], out, frames))
 			silent = false;
 	}
 	if (silent)
@@ -302,7 +305,7 @@ static void output_close(AudioUnit *unit)
 /* Opens an output unit that pulls 48 kHz stereo float (OBS's own format; the unit
  * converts to the device's rate) from render. dev = kAudioObjectUnknown follows
  * the system default output (the DefaultOutput unit tracks changes by itself). */
-static OSStatus output_open(AudioDeviceID dev, AURenderCallback render, AudioUnit *unit)
+static OSStatus output_open(AudioDeviceID dev, AURenderCallback render, void *ref, AudioUnit *unit)
 {
 	bool follow_default = dev == kAudioObjectUnknown;
 	AudioComponentDescription desc = {
@@ -332,7 +335,7 @@ static OSStatus output_open(AudioDeviceID dev, AURenderCallback render, AudioUni
 		.mChannelsPerFrame = 2,
 		.mBitsPerChannel = 32,
 	};
-	AURenderCallbackStruct cb = {.inputProc = render};
+	AURenderCallbackStruct cb = {.inputProc = render, .inputProcRefCon = ref};
 	if (st == noErr)
 		st = AudioUnitSetProperty(*unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &fmt,
 					  sizeof(fmt));
@@ -363,7 +366,7 @@ static void monitor_start(void)
 		if (dev == kAudioObjectUnknown)
 			blog(LOG_WARNING, "[OmniCast] Monitor device %s is gone, using the default output", monitor.uid);
 	}
-	OSStatus st = output_open(dev, monitor_render, &monitor.unit);
+	OSStatus st = output_open(dev, monitor_render, NULL, &monitor.unit);
 	if (st != noErr) {
 		blog(LOG_WARNING, "[OmniCast] Monitor output failed to start (%d)", (int)st);
 		return;
@@ -372,13 +375,14 @@ static void monitor_start(void)
 		atomic_store(&rings[c].flush, true);
 }
 
-/* Turns each channel's virtual-mic ring on or off for the current mode. */
-static void vmic_route(bool on)
+/* Turns each channel's ring in an output on or off. */
+static void vout_route(omni_virtual_output o, bool on)
 {
 	for (int c = 0; c < MAX_CH; c++) {
-		bool want = on && (vmic.mode == OMNI_VIRTUAL_MIC_STREAM ? !(vmic.excluded & (1u << c))
-									: c == OMNI_CHANNEL_MIC);
-		struct ring *v = &vrings[c];
+		bool mine = o == OMNI_DISCORD_VOICE ? c == OMNI_CHANNEL_MIC
+						     : c != OMNI_CHANNEL_MIC && !(vout_excluded & (1u << c));
+		bool want = on && mine;
+		struct ring *v = &vouts[o].rings[c];
 		if (want == atomic_load(&v->active))
 			continue;
 		if (want)
@@ -387,30 +391,32 @@ static void vmic_route(bool on)
 	}
 }
 
-static void vmic_stop(void)
+static void vout_stop(omni_virtual_output o)
 {
-	vmic_route(false);
-	output_close(&vmic.unit);
+	vout_route(o, false);
+	output_close(&vouts[o].unit);
 }
 
-static void vmic_start(void)
+static void vout_start(omni_virtual_output o)
 {
-	vmic_stop();
-	if (!vmic.uid[0])
+	struct vout *v = &vouts[o];
+	vout_stop(o);
+	if (!v->uid[0])
 		return;
-	AudioDeviceID dev = device_for_uid(vmic.uid);
+	AudioDeviceID dev = device_for_uid(v->uid);
 	if (dev == kAudioObjectUnknown) {
-		blog(LOG_WARNING, "[OmniCast] Virtual mic device %s is gone", vmic.uid);
+		blog(LOG_WARNING, "[OmniCast] Discord output device %s is gone", v->uid);
 		return;
 	}
-	vmic_route(true);
-	OSStatus st = output_open(dev, vmic_render, &vmic.unit);
+	vout_route(o, true);
+	OSStatus st = output_open(dev, vout_render, v, &v->unit);
 	if (st != noErr) {
-		blog(LOG_WARNING, "[OmniCast] Virtual mic output failed to start (%d)", (int)st);
-		vmic_stop();
+		blog(LOG_WARNING, "[OmniCast] Discord output failed to start (%d)", (int)st);
+		vout_stop(o);
 		return;
 	}
-	blog(LOG_INFO, "[OmniCast] Virtual mic is playing into %s", vmic.uid);
+	blog(LOG_INFO, "[OmniCast] Discord %s output is playing into %s", o == OMNI_DISCORD_VOICE ? "voice" : "stream",
+	     v->uid);
 }
 
 static bool has_streams(AudioDeviceID dev, AudioObjectPropertyScope scope)
@@ -491,25 +497,25 @@ void omni_monitor_set_device(const char *uid)
 	monitor_start();
 }
 
-int omni_virtual_mic_devices(omni_audio_device *out, int max)
+int omni_virtual_output_devices(omni_audio_device *out, int max)
 {
 	return list_devices(out, max, true);
 }
 
-bool omni_virtual_mic_set_device(const char *uid)
+bool omni_virtual_output_set_device(omni_virtual_output o, const char *uid)
 {
-	if (strcmp(uid, vmic.uid) != 0 || (uid[0] && !vmic.unit)) {
-		snprintf(vmic.uid, sizeof(vmic.uid), "%s", uid);
-		vmic_start();
+	struct vout *v = &vouts[o];
+	if (strcmp(uid, v->uid) != 0 || (uid[0] && !v->unit)) {
+		snprintf(v->uid, sizeof(v->uid), "%s", uid);
+		vout_start(o);
 	}
-	return vmic.unit != NULL;
+	return v->unit != NULL;
 }
 
-void omni_virtual_mic_set_mix(omni_virtual_mic_mode mode, uint32_t excluded_channels)
+void omni_virtual_output_set_excluded(uint32_t excluded_channels)
 {
-	vmic.mode = mode;
-	vmic.excluded = excluded_channels;
-	vmic_route(vmic.unit != NULL);
+	vout_excluded = excluded_channels;
+	vout_route(OMNI_DISCORD_STREAM, vouts[OMNI_DISCORD_STREAM].unit != NULL);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1613,7 +1619,8 @@ void omni_audio_start(const char *config_dir, obs_source_t *mic, obs_source_t *s
 	if (system)
 		attach_channel(OMNI_CHANNEL_SYSTEM, system);
 	monitor_start();
-	vmic_start();
+	for (int o = 0; o < OMNI_VIRTUAL_OUTPUT_COUNT; o++)
+		vout_start((omni_virtual_output)o);
 }
 
 void omni_audio_stop(void)
@@ -1634,5 +1641,6 @@ void omni_audio_stop(void)
 	}
 	mic_source = NULL;
 	monitor_stop();
-	vmic_stop();
+	for (int o = 0; o < OMNI_VIRTUAL_OUTPUT_COUNT; o++)
+		vout_stop((omni_virtual_output)o);
 }

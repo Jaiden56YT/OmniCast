@@ -9,7 +9,10 @@ import SwiftUI
 @MainActor
 @Observable
 final class Mixer {
-    static let shared = Mixer()
+    static let shared: Mixer = {
+        migrateVirtualMic()
+        return Mixer()
+    }()
 
     struct Channel: Identifiable, Codable, Equatable {
         var id: String // "mic", "system", or an app's bundle ID
@@ -38,7 +41,7 @@ final class Mixer {
     private(set) var channels: [Channel]
     /// Engine channel index per channel id, once the engine is running.
     private(set) var indices: [String: Int32] = [:] {
-        didSet { pushVirtualMix() }
+        didSet { pushDiscordExcluded() }
     }
 
     var monitorDevice: String = UserDefaults.standard.string(forKey: "monitorDevice") ?? "" {
@@ -48,58 +51,75 @@ final class Mixer {
         }
     }
 
-    /// Loopback device the mic is played into for Discord (or any app), "" for off.
-    var virtualMicDevice: String = UserDefaults.standard.string(forKey: "virtualMicDevice") ?? "" {
-        didSet {
-            UserDefaults.standard.set(virtualMicDevice, forKey: "virtualMicDevice")
-            applyVirtualMic()
-        }
+    /// Discord outputs: voice carries the mic (Discord's input device), stream carries
+    /// every other channel (Go Live's audio device). Each plays into a loopback device.
+    enum DiscordOutput: Int, CaseIterable {
+        case voice = 0, stream = 1
+        var key: String { self == .voice ? "voice" : "stream" }
     }
-    var virtualMicName: String = UserDefaults.standard.string(forKey: "virtualMicName") ?? "" {
-        didSet { UserDefaults.standard.set(virtualMicName, forKey: "virtualMicName") }
+
+    private(set) var discordDevices: [String] = DiscordOutput.allCases.map {
+        UserDefaults.standard.string(forKey: "discordDevice.\($0.key)") ?? ""
     }
-    /// What the virtual mic carries: the mic alone, or everything the stream hears.
-    enum VirtualMicMix: Int { case mic = 0, stream = 1 }
-    var virtualMicMix: VirtualMicMix = VirtualMicMix(rawValue: UserDefaults.standard.integer(forKey: "virtualMicMix")) ?? .mic {
-        didSet {
-            UserDefaults.standard.set(virtualMicMix.rawValue, forKey: "virtualMicMix")
-            if virtualMicMix == .stream { addDiscordIfRunning() }
-            pushVirtualMix()
-        }
+    private(set) var discordNames: [String] = DiscordOutput.allCases.map {
+        UserDefaults.standard.string(forKey: "discordName.\($0.key)") ?? ""
     }
-    /// Discord and its forks. Their channel stays out of the stream mix sent to the
-    /// virtual mic, or the call would hear itself back.
+    /// False when the picked device is gone or wouldn't start.
+    private(set) var discordRunning: [Bool] = [false, false]
+
+    /// Discord and its forks. Their channel stays out of the stream output, or the
+    /// call would hear itself back.
     nonisolated static let discordIDs: Set<String> = [
         "com.hnc.Discord", "com.hnc.DiscordCanary", "com.hnc.DiscordPTB", "dev.vencord.vesktop", "app.legcord.Legcord",
     ]
     var hasDiscordChannel: Bool { channels.contains { Self.discordIDs.contains($0.id) } }
 
-    /// False when the picked device is gone or wouldn't start.
-    private(set) var virtualMicRunning = false
-
     private var started = false
 
-    func applyVirtualMic() {
-        guard started else { return }
-        pushVirtualMix()
-        virtualMicRunning = omni_virtual_mic_set_device(virtualMicDevice)
+    /// "" turns the output off.
+    func setDiscordDevice(_ o: DiscordOutput, uid: String, name: String) {
+        discordDevices[o.rawValue] = uid
+        discordNames[o.rawValue] = name
+        UserDefaults.standard.set(uid, forKey: "discordDevice.\(o.key)")
+        UserDefaults.standard.set(name, forKey: "discordName.\(o.key)")
+        if o == .stream && !uid.isEmpty { addDiscordIfRunning() }
+        applyDiscord(o)
     }
 
-    private func pushVirtualMix() {
+    func applyDiscord(_ o: DiscordOutput) {
+        guard started else { return }
+        discordRunning[o.rawValue] = omni_virtual_output_set_device(
+            omni_virtual_output(rawValue: UInt32(o.rawValue)), discordDevices[o.rawValue])
+    }
+
+    private func pushDiscordExcluded() {
         guard started else { return }
         let excluded = indices.reduce(UInt32(0)) { mask, entry in
             Self.discordIDs.contains(entry.key) ? mask | (1 << UInt32(entry.value)) : mask
         }
-        omni_virtual_mic_set_mix(omni_virtual_mic_mode(rawValue: UInt32(virtualMicMix.rawValue)), excluded)
+        omni_virtual_output_set_excluded(excluded)
     }
 
-    /// Without its own channel Discord is part of system audio, and so of the mix.
+    /// Without its own channel Discord is part of system audio, and so of the stream output.
     private func addDiscordIfRunning() {
         guard appsSupported, !hasDiscordChannel,
               let app = NSWorkspace.shared.runningApplications.first(where: {
                   $0.bundleIdentifier.map(Self.discordIDs.contains) ?? false
               }) else { return }
         addApp(bundleID: app.bundleIdentifier!, name: app.localizedName ?? "Discord")
+    }
+
+    /// The single "Use in Discord" output from before carried the mic or the whole
+    /// stream mix; its device moves to the matching output.
+    private static func migrateVirtualMic() {
+        let d = UserDefaults.standard
+        guard let uid = d.string(forKey: "virtualMicDevice") else { return }
+        let o: DiscordOutput = d.integer(forKey: "virtualMicMix") == 1 ? .stream : .voice
+        if d.string(forKey: "discordDevice.\(o.key)") == nil {
+            d.set(uid, forKey: "discordDevice.\(o.key)")
+            d.set(d.string(forKey: "virtualMicName") ?? "", forKey: "discordName.\(o.key)")
+        }
+        ["virtualMicDevice", "virtualMicName", "virtualMicMix"].forEach(d.removeObject)
     }
 
     var micInput: Int = UserDefaults.standard.object(forKey: "micInput") as? Int ?? 0 {
@@ -142,7 +162,8 @@ final class Mixer {
         MusicSync.shared.applySource()
         omni_monitor_set_device(monitorDevice)
         started = true
-        applyVirtualMic()
+        pushDiscordExcluded()
+        DiscordOutput.allCases.forEach(applyDiscord)
         omni_mic_set_input(omni_mic_input(rawValue: UInt32(micInput)))
         for (p, on) in pluginsOn.enumerated() where on {
             omni_plugin_set_enabled(omni_plugin(rawValue: UInt32(p)), true)
@@ -256,6 +277,7 @@ struct AudioMixerPanel: View {
     var body: some View {
         Panel(title: "Audio") {
             HStack(spacing: 10) {
+                DiscordOutputsButton()
                 MonitorPicker()
                 if mixer.appsSupported { AddAppMenu() }
             }
@@ -401,62 +423,85 @@ func audioDevices(_ list: (UnsafeMutablePointer<omni_audio_device>?, Int32) -> I
     }
 }
 
-/// Plays the mic, plugins and all, into a loopback device that Discord (or any app)
-/// then uses as its microphone.
-struct VirtualMicControls: View {
+/// The Discord outputs: your mic for voice, the rest of the stream for Go Live.
+struct DiscordOutputsButton: View {
+    @State private var shown = false
+    private var mixer: Mixer { .shared }
+
+    var body: some View {
+        Button { shown.toggle() } label: {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .foregroundStyle(mixer.discordRunning.contains(true) ? Theme.good : .primary)
+        }
+        .buttonStyle(.borderless)
+        .help("Send your mic and the stream's audio to Discord")
+        .popover(isPresented: $shown, arrowEdge: .bottom) { DiscordOutputs() }
+    }
+}
+
+struct DiscordOutputs: View {
     @State private var devices: [(uid: String, name: String)] = []
     private var mixer: Mixer { .shared }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Picker("", selection: Binding(get: { mixer.virtualMicMix }, set: { mixer.virtualMicMix = $0 })) {
-                Text("Mic").tag(Mixer.VirtualMicMix.mic)
-                Text("Stream mix").tag(Mixer.VirtualMicMix.stream)
+        VStack(alignment: .leading, spacing: 10) {
+            section(.voice, title: "Voice: your mic, with plugins")
+            section(.stream, title: "Go Live audio: the stream without your mic")
+            if devices.isEmpty {
+                note("Needs a loopback audio device such as BlackHole 2ch.", good: false)
+            } else if mixer.discordDevices[0] == mixer.discordDevices[1] && !mixer.discordDevices[0].isEmpty {
+                note("Both go into the same device, so voice gets the stream too. Pick two loopbacks (e.g. BlackHole 2ch and 16ch).", good: false)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .help("Mic: just your mic. Stream mix: everything the stream hears (mic, game, music...) except Discord itself, so you can screen share with sound.")
-            Picker("", selection: Binding(get: { mixer.virtualMicDevice }, set: { uid in
-                mixer.virtualMicName = devices.first { $0.uid == uid }?.name ?? ""
-                mixer.virtualMicDevice = uid
+        }
+        .padding(12)
+        .frame(width: 280)
+        .onAppear(perform: load)
+    }
+
+    private func section(_ o: Mixer.DiscordOutput, title: String) -> some View {
+        let uid = mixer.discordDevices[o.rawValue], name = mixer.discordNames[o.rawValue]
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
+            Picker("", selection: Binding(get: { uid }, set: { new in
+                mixer.setDiscordDevice(o, uid: new, name: devices.first { $0.uid == new }?.name ?? "")
             })) {
                 Text("Off").tag("")
                 ForEach(devices, id: \.uid) { Text($0.name).tag($0.uid) }
-                if !mixer.virtualMicDevice.isEmpty && !devices.contains(where: { $0.uid == mixer.virtualMicDevice }) {
-                    Text("\(mixer.virtualMicName) (not found)").tag(mixer.virtualMicDevice)
+                if !uid.isEmpty && !devices.contains(where: { $0.uid == uid }) {
+                    Text("\(name) (not found)").tag(uid)
                 }
             }
             .labelsHidden()
             .controlSize(.small)
-            Text(status)
-                .font(.system(size: 10))
-                .foregroundStyle(mixer.virtualMicRunning ? Theme.good : Theme.textDim)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            note(status(o), good: mixer.discordRunning[o.rawValue])
         }
-        .help("Plays it into this device at the Stream levels. Pick the same device as the input in Discord.")
-        .onAppear(perform: load)
     }
 
-    private var status: String {
-        if devices.isEmpty && mixer.virtualMicDevice.isEmpty {
-            return "Needs a loopback audio device such as BlackHole 2ch"
+    private func note(_ text: String, good: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 10))
+            .foregroundStyle(good ? Theme.good : Theme.textDim)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
+    }
+
+    private func status(_ o: Mixer.DiscordOutput) -> String {
+        let uid = mixer.discordDevices[o.rawValue], name = mixer.discordNames[o.rawValue]
+        if uid.isEmpty {
+            return o == .voice ? "Off: Discord can use your mic directly, without the plugins." : "Off"
         }
-        if mixer.virtualMicDevice.isEmpty { return "Off" }
-        if !mixer.virtualMicRunning { return "Couldn't start \(mixer.virtualMicName)" }
-        if mixer.virtualMicMix == .stream && !mixer.hasDiscordChannel {
-            return "Give Discord a channel with + first, or your call will hear itself back"
-        }
-        let pick = "In Discord: Settings → Voice & Video → Input Device → \(mixer.virtualMicName)"
-        return mixer.virtualMicMix == .stream
-            ? pick + ". Turn off noise suppression and echo cancellation there, or they'll cut the game audio."
-            : pick
+        if !mixer.discordRunning[o.rawValue] { return "Couldn't start \(name)" }
+        if o == .voice { return "Discord: Settings → Voice & Video → Input Device → \(name)" }
+        if !mixer.hasDiscordChannel { return "Give Discord a channel with + first, or the call will hear itself back" }
+        return "Discord: Go Live → Devices → OBS Virtual Camera, then the gear → Audio Device → \(name)"
     }
 
     private func load() {
-        devices = audioDevices(omni_virtual_mic_devices)
+        devices = audioDevices(omni_virtual_output_devices)
         // A device that came back since the last try starts again.
-        if !mixer.virtualMicDevice.isEmpty && !mixer.virtualMicRunning { mixer.applyVirtualMic() }
+        for o in Mixer.DiscordOutput.allCases where !mixer.discordDevices[o.rawValue].isEmpty && !mixer.discordRunning[o.rawValue] {
+            mixer.applyDiscord(o)
+        }
     }
 }
 
@@ -532,9 +577,6 @@ struct MicSettings: View {
             }
             Text("Turned-off plugins aren't loaded at all.")
                 .font(.system(size: 10)).foregroundStyle(Theme.textDim)
-
-            Text("Use in Discord").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
-            VirtualMicControls()
 
             Text("Match Spotify").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
             MusicSyncControls()

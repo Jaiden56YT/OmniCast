@@ -131,25 +131,28 @@ the Discord app on this Mac over its local RPC socket (regular, Canary and PTB),
 follows whichever one you're in a call on, and keeps the secret and token in the
 keychain.
 
-## Your mic (or the whole stream) in Discord
+## Discord: your voice and Go Live
 
-Mic → FX → **Use in Discord** plays audio into a loopback audio device. In
-Discord, set Settings → Voice & Video → Input Device to that same device.
+The speech-bubble button in the Audio panel sends two things to Discord, each into
+a loopback audio device:
 
-- **Mic**: just your mic, with STACKS and Muze.
-- **Stream mix**: everything the stream hears (mic, game, Spotify, apps), so a
-  screen share has its sound. Discord's own channel is left out so the call
-  doesn't hear itself back; if Discord has no channel yet, switching to Stream mix
-  gives it one. Turn off Discord's noise suppression and echo cancellation, or
-  they cut the game audio.
+- **Voice**: your mic with STACKS and Muze. In Discord, set Settings → Voice &
+  Video → Input Device to that device. Leave it off to give Discord your mic
+  directly, without the plugins.
+- **Go Live audio**: everything else the stream hears (game, Spotify, apps),
+  without your mic, so friends don't hear you twice. In Discord, start Go Live →
+  Devices → OBS Virtual Camera, then the gear → Audio Device → that device.
+  Discord's own channel is left out so the call doesn't hear itself back; if
+  Discord has no channel yet, turning this on gives it one.
 
-Either way it follows the Stream faders and mutes, like the stream.
+Both follow the Stream faders and mutes, like the stream. Voice and Go Live audio
+each need their own loopback device (e.g. BlackHole 2ch and BlackHole 16ch).
 
-This needs a loopback device. Install BlackHole 2ch once (`brew install --cask
-blackhole-2ch`, which asks for your password) and pick it here. Pro Tools Audio
-Bridge, Steam Streaming Microphone and Zoom's device aren't offered, because they
-only carry audio while their own app drives them. Turn off Discord's noise
-suppression (Krisp) if it smears the harmonies.
+Install BlackHole with `brew install --cask blackhole-2ch` (and `blackhole-16ch`
+for a second device); each asks for your password. Pro Tools Audio Bridge, Steam
+Streaming Microphone and Zoom's device aren't offered, because they only carry
+audio while their own app drives them. Turn off Discord's noise suppression
+(Krisp) if it smears Muze's harmonies.
 
 ## Virtual camera
 
