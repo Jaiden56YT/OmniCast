@@ -158,9 +158,14 @@ Controls → Virtual Camera sends one canvas, 16:9 **or** 9:16, to the
 Flip the 16:9 / 9:16 switch while it's on to move the camera to the other canvas.
 The device is fixed at 1920×1080, so 9:16 appears centred with black side bars.
 
-It uses the camera extension OBS.app installs (open OBS once and click Start
-Virtual Camera if it isn't installed yet). OmniCast feeds the extension directly,
+It uses the camera extension OBS.app installs. OmniCast feeds the extension directly,
 because OBS's own plugin only works inside OBS.app and only sends the main canvas.
+The extension stays installed after OBS.app is deleted (macOS runs it from its own
+copy in `/Library/SystemExtensions`), so the camera keeps working without OBS.
+If it isn't installed yet (`systemextensionsctl list` doesn't show
+`com.obsproject.obs-studio.mac-camera-extension`), install OBS, open it once, click
+Start Virtual Camera, quit it, then delete OBS again. To remove the camera for
+good: System Settings → General → Login Items & Extensions → Camera Extensions.
 The Camera source skips virtual cameras so the feed can't loop back into itself;
 pick the camera under Sources → Camera.
 
@@ -182,10 +187,33 @@ It writes `benchmark.json` (fps, render time, missed frames) next to the recordi
 ## Build
 
 ```sh
-./scripts/bootstrap.sh   # libobs headers matching OBS.app, plus simde
+./scripts/bootstrap.sh   # copies libobs out of OBS.app, fetches matching headers and simde
 ./scripts/bundle.sh      # builds build/OmniCast.app
 open build/OmniCast.app
 ```
+
+OBS.app is only needed once, as the source of the libobs binaries.
+`scripts/obs-runtime.sh` (run by both scripts) copies libobs.framework, the Metal
+and OpenGL renderers, the FFmpeg / x264 / mbedTLS / SRT / RIST libraries they link,
+and the nine OBS plugins OmniCast loads (capture, VideoToolbox, x264, AAC,
+RTMP/MP4 outputs, RTMP service, image source, colour filter) into
+`vendor/obs-runtime` (about 75 MB, git-ignored). The build links against that
+copy and `bundle.sh` copies it into `OmniCast.app/Contents/Frameworks` and
+`PlugIns`, then signs every library and plugin and the app. After the first
+build OBS.app can be deleted. Every library uses an `@rpath/…` install name and
+`@executable_path/../Frameworks` as its rpath, so they load from inside the app
+as they are.
+
+To take the files from another copy of OBS, or to refresh them after updating OBS
+(delete `vendor/obs-studio` too so the headers match):
+
+```sh
+OBS_APP=/path/to/OBS.app ./scripts/obs-runtime.sh --refresh
+```
+
+To add a plugin (say OmniCast starts using a source from `obs-transitions`), add
+it to `plugins` in `scripts/obs-runtime.sh`. The script notices the list
+changed and copies it again, so OBS.app has to be there for that.
 
 Run `./scripts/make-signing-cert.sh` once. It creates a self-signed code-signing
 certificate named **OmniCast Local** in your login keychain, and `bundle.sh` signs
@@ -194,7 +222,8 @@ rebuilds. Without it the app is signed ad hoc and macOS asks again after every
 build (and a Screen Recording switch left on from an older build doesn't cover
 the new one: remove OmniCast from the list and allow it again).
 
-OBS.app must stay installed: `OmniCast.app/Contents/Frameworks` and `PlugIns` link to it.
+To delete OBS, remove `/Applications/OBS.app` (and `~/Library/Application Support/obs-studio`
+if you want its settings gone). The virtual camera stays (see "Virtual camera").
 
 ## Layout
 

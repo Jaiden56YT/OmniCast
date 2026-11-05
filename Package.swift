@@ -1,9 +1,12 @@
 // swift-tools-version:5.10
+import Foundation
 import PackageDescription
 
-// libobs comes from the installed OBS.app (32.0.4); its headers are vendored by
-// scripts/bootstrap.sh. scripts/bundle.sh wraps the build into OmniCast.app.
-let obsFrameworks = "/Applications/OBS.app/Contents/Frameworks"
+// libobs 32.0.4 and its headers are vendored by scripts/bootstrap.sh: the
+// binaries are copied out of OBS.app once into vendor/obs-runtime, and
+// scripts/bundle.sh copies them into OmniCast.app, so OBS.app isn't needed after that.
+let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
+let obsFrameworks = "\(root)/vendor/obs-runtime/Frameworks"
 
 let package = Package(
     name: "OmniCast",

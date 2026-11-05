@@ -57,7 +57,7 @@ typedef struct {
 
 typedef void (*omni_status_callback)(int index, omni_output_state state, const char *message, void *ctx);
 
-/* Starts libobs, loads the OBS.app plugins and builds both canvases with a default
+/* Starts libobs, loads the bundled OBS plugins and builds both canvases with a default
  * scene (display, camera, desktop audio, mic). Must run on the main thread. */
 bool omni_engine_start(const char *config_dir, bool prefer_metal, const omni_canvas_config *horizontal,
 		       const omni_canvas_config *vertical, char *err, size_t err_len);
@@ -287,9 +287,10 @@ bool omni_codec_available(omni_codec codec);
 /* ------------------------------------------------------------------------- */
 /* Virtual camera
  *
- * Feeds one canvas, either one, to the "OBS Virtual Camera" device that OBS.app
- * installs, so Zoom, Discord, FaceTime etc. can pick it as a camera. The device is
- * fixed at 1920x1080, so the vertical canvas is centred with black side bars. */
+ * Feeds one canvas, either one, to the "OBS Virtual Camera" device of the camera
+ * extension OBS.app installed (it stays after OBS.app is deleted), so Zoom, Discord,
+ * FaceTime etc. can pick it as a camera. The device is fixed at 1920x1080, so the
+ * vertical canvas is centred with black side bars. */
 
 /* True when the OBS camera extension is installed and its device is visible. */
 bool omni_virtualcam_available(void);

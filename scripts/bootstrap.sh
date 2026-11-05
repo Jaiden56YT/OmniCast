@@ -1,11 +1,13 @@
 #!/bin/zsh
-# Fetches the libobs headers matching the installed OBS.app and the simde headers they need.
+# Copies libobs and the OBS plugins OmniCast uses out of OBS.app into
+# vendor/obs-runtime (once), then fetches the libobs headers of the same version
+# and the simde headers they need. After the first run OBS.app can be deleted.
 set -euo pipefail
 cd "${0:A:h}/.."
 
-OBS_APP=/Applications/OBS.app
-version=$(defaults read "$OBS_APP/Contents/Info.plist" CFBundleShortVersionString)
-echo "OBS.app is $version"
+./scripts/obs-runtime.sh "$@"
+version=$(head -1 vendor/obs-runtime/STAMP | sed 's/^OBS //')
+echo "libobs is $version"
 
 if [[ ! -d vendor/obs-studio ]]; then
 	git clone --depth 1 --branch "$version" --filter=blob:none --sparse \

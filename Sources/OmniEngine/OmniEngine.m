@@ -20,9 +20,10 @@
 #define MAX_OUTPUTS 16
 #define RECORD_AUDIO_TRACKS 3
 
-/* Modules in OBS.app that need the OBS frontend (Qt UI / frontend API) or are
- * not useful here. Loading them without the OBS frontend would crash or waste
- * startup time. */
+/* Only the plugins OmniCast uses are copied into the app (scripts/obs-runtime.sh),
+ * so none of these are there. The list stays as a guard in case a plugin folder
+ * with them ever ends up on the module path: they need the OBS frontend (Qt UI /
+ * frontend API) or aren't useful here, and would crash or waste startup time. */
 static const char *disabled_modules[] = {
 	"frontend-tools", "decklink-output-ui", "aja-output-ui", "obs-websocket", "obs-vst",
 	"mac-virtualcam", "decklink", "decklink-captions", "aja", "obs-browser", "vlc-video",
@@ -115,8 +116,8 @@ static void register_vcam_output(void);
 
 static NSString *frameworks_path(void)
 {
-	/* The app bundle's Frameworks folder links to OBS.app's, which holds libobs
-	 * and both graphics modules. */
+	/* The app bundle's Frameworks folder holds libobs and both graphics modules,
+	 * copied in by scripts/bundle.sh. */
 	return [[NSBundle mainBundle] privateFrameworksPath];
 }
 
@@ -1167,7 +1168,11 @@ uint64_t omni_record_bytes(omni_canvas canvas)
  * OBS's own mac-virtualcam output can't be used here: it only activates the
  * camera extension from inside OBS.app and always sends the main canvas. The
  * extension's sink stream takes frames from any app, so this feeds it directly,
- * the same way that plugin does: NV12 CVPixelBuffers into the CMIO sink queue. */
+ * the same way that plugin does: NV12 CVPixelBuffers into the CMIO sink queue.
+ *
+ * The extension was installed by OBS.app and stays installed (and keeps
+ * working) after OBS.app is deleted: macOS runs it from its own copy in
+ * /Library/SystemExtensions. Nothing here needs OBS.app. */
 
 #define VCAM_WIDTH 1920
 #define VCAM_HEIGHT 1080
@@ -1207,13 +1212,14 @@ static UInt32 cmio_size(CMIOObjectID obj, CMIOObjectPropertySelector sel)
 	return size;
 }
 
-/* The device UID comes from the OBS plugin's Info.plist (it matches the
- * extension's); the device name is the fallback. */
+/* The OBS camera extension's device UID (OBSCameraDeviceUUID in OBS's
+ * mac-virtualcam.plugin Info.plist; fixed across OBS versions). The device
+ * name is the fallback. */
+static NSString *const vcam_device_uid = @"7626645E-4425-469E-9D8B-97E0FA59AC75";
+
 static CMIOObjectID find_vcam_device(bool log_missing)
 {
-	NSString *plugin = [[[NSBundle mainBundle] builtInPlugInsPath]
-		stringByAppendingPathComponent:@"mac-virtualcam.plugin"];
-	NSString *uid = [[NSBundle bundleWithPath:plugin] objectForInfoDictionaryKey:@"OBSCameraDeviceUUID"];
+	NSString *uid = vcam_device_uid;
 
 	UInt32 size = cmio_size(kCMIOObjectSystemObject, kCMIOHardwarePropertyDevices);
 	UInt32 count = size / sizeof(CMIOObjectID);

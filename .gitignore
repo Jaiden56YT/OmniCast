@@ -1,5 +1,7 @@
 .build/
 build/
 vendor/obs-studio/
+vendor/obs-runtime/
+vendor/obs-runtime.tmp/
 vendor/include/simde/
 .DS_Store
