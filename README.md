@@ -131,12 +131,19 @@ the Discord app on this Mac over its local RPC socket (regular, Canary and PTB),
 follows whichever one you're in a call on, and keeps the secret and token in the
 keychain.
 
-## Your mic in Discord
+## Your mic (or the whole stream) in Discord
 
-Mic → FX → **Use in Discord** plays your mic, with STACKS and Muze, into a
-loopback audio device. In Discord, set Settings → Voice & Video → Input Device
-to that same device. Discord then gets the same mic the stream hears: it follows
-the mic's Stream fader and goes silent when the mic is muted on stream.
+Mic → FX → **Use in Discord** plays audio into a loopback audio device. In
+Discord, set Settings → Voice & Video → Input Device to that same device.
+
+- **Mic**: just your mic, with STACKS and Muze.
+- **Stream mix**: everything the stream hears (mic, game, Spotify, apps), so a
+  screen share has its sound. Discord's own channel is left out so the call
+  doesn't hear itself back; if Discord has no channel yet, switching to Stream mix
+  gives it one. Turn off Discord's noise suppression and echo cancellation, or
+  they cut the game audio.
+
+Either way it follows the Stream faders and mutes, like the stream.
 
 This needs a loopback device. Install BlackHole 2ch once (`brew install --cask
 blackhole-2ch`, which asks for your password) and pick it here. Pro Tools Audio

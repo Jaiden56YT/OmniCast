@@ -128,13 +128,17 @@ static void tempo_feed(const float *l, const float *r, uint32_t frames)
 	}
 }
 
-/* Virtual mic: the mic alone, played into a loopback device (e.g. Pro Tools Audio
- * Bridge or Steam Streaming Microphone) whose input Discord or any app can pick as
- * its microphone. Off while vmic.uid is "". */
-static struct ring vmic_ring;
+/* Virtual mic: played into a loopback device (e.g. BlackHole) whose input Discord
+ * or any app can pick as its microphone. It carries the mic alone, or the stream
+ * mix minus the excluded channels (Discord itself, so a call doesn't hear itself
+ * back). Each channel it carries has a second ring, at that channel's stream level.
+ * Off while vmic.uid is "". */
+static struct ring vrings[MAX_CH];
 static struct {
 	AudioUnit unit;
 	char uid[256];
+	omni_virtual_mic_mode mode;
+	uint32_t excluded;
 } vmic;
 
 static void ring_write(struct ring *r, const float *l, const float *rr, uint32_t frames)
@@ -176,12 +180,12 @@ static void on_channel_audio(void *param, obs_source_t *source, const struct aud
 
 	ring_write(r, l, rr, frames);
 
-	/* The virtual mic gets the mic as the stream hears it: after the plugins, at
-	 * the stream fader, silent while the mic is muted on stream. */
-	if (r == &rings[OMNI_CHANNEL_MIC] && atomic_load_explicit(&vmic_ring.active, memory_order_acquire)) {
-		atomic_store_explicit(&vmic_ring.gain, muted ? 0.0f : obs_source_get_volume(source),
-				      memory_order_relaxed);
-		ring_write(&vmic_ring, l, rr, frames);
+	/* The virtual mic gets the channel as the stream hears it: after the plugins,
+	 * at the stream fader, silent while muted on stream. */
+	struct ring *v = &vrings[r - rings];
+	if (atomic_load_explicit(&v->active, memory_order_acquire)) {
+		atomic_store_explicit(&v->gain, muted ? 0.0f : obs_source_get_volume(source), memory_order_relaxed);
+		ring_write(v, l, rr, frames);
 	}
 }
 
@@ -263,7 +267,12 @@ static OSStatus vmic_render(void *ref, AudioUnitRenderActionFlags *flags, const 
 	UNUSED_PARAMETER(bus);
 	float *out[2];
 	clear_output(io, out);
-	if (!ring_mix(&vmic_ring, out, frames))
+	bool silent = true;
+	for (int c = 0; c < MAX_CH; c++) {
+		if (ring_mix(&vrings[c], out, frames))
+			silent = false;
+	}
+	if (silent)
 		*flags |= kAudioUnitRenderAction_OutputIsSilence;
 	return noErr;
 }
@@ -363,9 +372,24 @@ static void monitor_start(void)
 		atomic_store(&rings[c].flush, true);
 }
 
+/* Turns each channel's virtual-mic ring on or off for the current mode. */
+static void vmic_route(bool on)
+{
+	for (int c = 0; c < MAX_CH; c++) {
+		bool want = on && (vmic.mode == OMNI_VIRTUAL_MIC_STREAM ? !(vmic.excluded & (1u << c))
+									: c == OMNI_CHANNEL_MIC);
+		struct ring *v = &vrings[c];
+		if (want == atomic_load(&v->active))
+			continue;
+		if (want)
+			atomic_store(&v->flush, true);
+		atomic_store_explicit(&v->active, want, memory_order_release);
+	}
+}
+
 static void vmic_stop(void)
 {
-	atomic_store_explicit(&vmic_ring.active, false, memory_order_release);
+	vmic_route(false);
 	output_close(&vmic.unit);
 }
 
@@ -379,8 +403,7 @@ static void vmic_start(void)
 		blog(LOG_WARNING, "[OmniCast] Virtual mic device %s is gone", vmic.uid);
 		return;
 	}
-	atomic_store(&vmic_ring.flush, true);
-	atomic_store_explicit(&vmic_ring.active, true, memory_order_release);
+	vmic_route(true);
 	OSStatus st = output_open(dev, vmic_render, &vmic.unit);
 	if (st != noErr) {
 		blog(LOG_WARNING, "[OmniCast] Virtual mic output failed to start (%d)", (int)st);
@@ -480,6 +503,13 @@ bool omni_virtual_mic_set_device(const char *uid)
 		vmic_start();
 	}
 	return vmic.unit != NULL;
+}
+
+void omni_virtual_mic_set_mix(omni_virtual_mic_mode mode, uint32_t excluded_channels)
+{
+	vmic.mode = mode;
+	vmic.excluded = excluded_channels;
+	vmic_route(vmic.unit != NULL);
 }
 
 /* ------------------------------------------------------------------------- */
