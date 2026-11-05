@@ -335,6 +335,7 @@ struct SourceRow: View {
 
 struct ControlsPanel: View {
     @Bindable private var engine = Engine.shared
+    @State private var showInfo = false
 
     var body: some View {
         Panel(title: "Controls") {
@@ -397,11 +398,19 @@ struct ControlsPanel: View {
             .disabled(!engine.running || (!engine.live && !engine.destinations.contains { $0.enabled && $0.isReady }))
 
             let count = engine.destinations.filter { $0.enabled && $0.isReady }.count
-            Text("\(count) destination\(count == 1 ? "" : "s") · "
-                 + String(format: "%.1f Mbps up", Double(engine.uploadKbps) / 1000))
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(Theme.textDim)
+            HStack {
+                Text("\(count) destination\(count == 1 ? "" : "s") · "
+                     + String(format: "%.1f Mbps up", Double(engine.uploadKbps) / 1000))
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.textDim)
+                Spacer()
+                Button("Stream info…") { showInfo = true }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11))
+                    .help("Title on every platform, game on Twitch and Kick")
+            }
         }
+        .sheet(isPresented: $showInfo) { StreamInfoSheet() }
     }
 
     /// One canvas at a time; switching it while on moves the camera over without stopping.

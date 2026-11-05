@@ -6,6 +6,8 @@ struct SettingsView: View {
         TabView {
             RecordingSettingsView()
                 .tabItem { Label("Recording", systemImage: "record.circle") }
+            AccountsSettingsView()
+                .tabItem { Label("Accounts", systemImage: "person.crop.circle.badge.checkmark") }
             ChatSettingsView()
                 .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right") }
             DiscordSettingsView()
@@ -13,7 +15,7 @@ struct SettingsView: View {
             VideoSettingsView()
                 .tabItem { Label("Video", systemImage: "cpu") }
         }
-        .frame(width: 500)
+        .frame(width: 560)
     }
 }
 

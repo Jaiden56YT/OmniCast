@@ -66,6 +66,26 @@ inline emotes. Channels, text size and how long lines stay up are in
 Settings → Chat; move and resize the box with Arrange. Sources → Chat → ⋯ has
 "Add test messages" for setting it up offline.
 
+## Stream info (titles and games)
+
+Controls → **Stream info…** sets one title on YouTube, Twitch and Kick at once,
+and the game on Twitch and Kick (searchable, with recent picks and a "Same as
+Twitch" button for Kick). It loads what's set now when it opens, and shows a
+✓ or the error per platform.
+
+It uses each platform's official API, so each needs a one-time sign-in from
+Settings → Accounts, with a free developer app you register yourself:
+
+- **Twitch**: a "Public" app's Client ID; sign in by entering a code at
+  twitch.tv/activate.
+- **Kick**: Client ID + Secret, redirect `http://localhost:39651/callback`.
+- **YouTube**: a Google Cloud "Desktop app" OAuth client with the YouTube Data
+  API v3 enabled. It renames the live (or next scheduled) broadcast; YouTube's
+  game can't be set through the API.
+
+Sign-ins use a loopback-only redirect (never reachable from the network) and
+PKCE; tokens and secrets live in the keychain and refresh on their own.
+
 ## Spotify now playing
 
 Sources → Spotify: a card with the album art, song and artist fades in when a
