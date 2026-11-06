@@ -2,13 +2,34 @@ import Foundation
 import Observation
 import OmniEngine
 
-/// Makes Muze follow the music playing on Spotify: Muze Auto Key runs on the
-/// Spotify channel and publishes the key (Muze, set to Key Link: Follow, takes
-/// it), and the channel's beat is tracked to give Muze the song's tempo.
+/// The music apps the stream switches between. Only one is on stream at a time.
+enum MusicApp: String, CaseIterable, Identifiable {
+    case spotify = "com.spotify.client"
+    case untitled = "com.untitledinbrackets.untitled-macos"
+
+    var id: String { rawValue }
+    var name: String { self == .spotify ? "Spotify" : "[untitled]" }
+}
+
+/// Makes Muze follow the music playing in the selected music app: Muze Auto Key
+/// runs on that app's channel and publishes the key (Muze, set to Key Link:
+/// Follow, takes it), and the channel's beat is tracked to give Muze the tempo.
 @MainActor
 @Observable
 final class MusicSync {
     static let shared = MusicSync()
+
+    /// The music app on stream: Muze follows it, the other is muted on stream, and
+    /// the now-playing card shows only for Spotify (other apps don't share songs).
+    var source = MusicApp(rawValue: UserDefaults.standard.string(forKey: "music.source") ?? "") ?? .spotify {
+        didSet {
+            UserDefaults.standard.set(source.rawValue, forKey: "music.source")
+            Mixer.shared.selectMusicApp(source)
+            songChanged()
+            applySource()
+            SpotifyOverlay.shared.sourceChanged()
+        }
+    }
 
     var enabled = UserDefaults.standard.object(forKey: "music.follow") as? Bool ?? true {
         didSet {
@@ -34,9 +55,9 @@ final class MusicSync {
         }
     }
 
-    /// Call when the mixer's channels change: follows Spotify's channel if there is one.
+    /// Call when the mixer's channels change: follows the music app's channel if it has one.
     func applySource() {
-        let index = Mixer.shared.indices[Mixer.spotifyID]
+        let index = Mixer.shared.indices[source.rawValue]
         following = enabled && index != nil
         let target = following ? index : nil
         if target != followedIndex {

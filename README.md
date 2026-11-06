@@ -86,9 +86,10 @@ Settings → Accounts, with a free developer app you register yourself:
 Sign-ins use a loopback-only redirect (never reachable from the network) and
 PKCE; tokens and secrets live in the keychain and refresh on their own.
 
-## Muze follows Spotify
+## Muze follows the music
 
-Mic → FX → "Muze follows Spotify's key and tempo" (on by default):
+Mic → FX → "Muze follows Spotify's key and tempo" (on by default; it follows
+[untitled] instead when Sources → Music is set to it):
 
 - **Key**: Muze Auto Key runs on the Spotify channel and publishes the song's key;
   Muze (Key Link: Follow) retunes to it. Needs Muze Auto Key installed.
@@ -102,13 +103,20 @@ Spotify's own tempo/key data isn't available to new apps (its API closed that
 in 2024), so this listens to the audio instead. Very fast songs (~170+) can be
 read wrong.
 
-## Spotify now playing
+## Music: Spotify or [untitled]
 
-Sources → Spotify: a card with the album art, song and artist fades in when a
-song starts (or resumes), stays 30 seconds and fades out; pausing hides it. It
-sits in a corner of the 16:9 canvas (and above the camera on 9:16), and isn't
-rendered at all while faded out. It reads Spotify's own play/pause
-announcements, so it needs no login. Spotify also gets its own mixer channel.
+Sources → Music has a **Spotify | [untitled]** switch for which app's music is on
+stream. The selected app gets a mixer channel if it has none, is unmuted on
+stream, and the other is muted on stream (so also in Discord's Go Live audio).
+Muze follows the selected app's key and tempo.
+
+The now-playing card shows only for Spotify: a card with the album art, song and
+artist fades in when a song starts (or resumes), stays 30 seconds and fades out;
+pausing hides it. It sits in a corner of the 16:9 canvas (and above the camera
+on 9:16), and isn't rendered at all while faded out. It reads Spotify's own
+play/pause announcements, so it needs no login. [untitled] doesn't announce its
+songs, and macOS only shares Now Playing with Apple's own apps, so there's no
+card for it.
 
 ## Discord call overlay
 

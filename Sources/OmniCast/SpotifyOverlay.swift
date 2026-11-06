@@ -101,14 +101,26 @@ final class SpotifyOverlay {
                         artist: info["Artist"] as? String ?? "",
                         playing: playing)
         let resumed = playing && track?.playing == false
-        if new.id != track?.id { MusicSync.shared.songChanged() }
+        let spotifySelected = MusicSync.shared.source == .spotify
+        if new.id != track?.id && spotifySelected { MusicSync.shared.songChanged() }
         track = new
-        guard enabled else { return }
+        guard enabled, spotifySelected else { return }
         if !playing {
             shownID = nil
             fade(to: 0)
         } else if new.id != shownID || resumed, !new.name.isEmpty {
             show(new)
+        }
+    }
+
+    /// The music switch moved: hide the card for other apps, or show the Spotify
+    /// song that's already playing when Spotify comes back.
+    func sourceChanged() {
+        shownID = nil
+        if MusicSync.shared.source != .spotify {
+            fade(to: 0)
+        } else if enabled, let track, track.playing, !track.name.isEmpty {
+            show(track)
         }
     }
 
@@ -266,15 +278,16 @@ final class SpotifyOverlay {
 
 import SwiftUI
 
-/// Sources panel row for the Spotify card.
+/// Sources panel row for the music: which app is on stream, and the Spotify card.
 struct SpotifySourceRow: View {
     @Bindable private var spotify = SpotifyOverlay.shared
+    @Bindable private var sync = MusicSync.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Image(systemName: "music.note").frame(width: 18)
-                Text("Spotify").font(.system(size: 12))
+                Text("Music").font(.system(size: 12))
                 Spacer()
                 Menu {
                     Button("Preview card") { spotify.preview() }
@@ -300,8 +313,21 @@ struct SpotifySourceRow: View {
             .frame(height: 26)
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
 
+            Picker("", selection: $sync.source) {
+                ForEach(MusicApp.allCases) { Text($0.name).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .padding(.leading, 26)
+            .disabled(!Engine.shared.running)
+            .help("Which app's music is on stream. The other is muted on stream, and Muze follows this one.")
+
             Group {
-                if let track = spotify.track, track.playing {
+                if sync.source != .spotify {
+                    Text("No song card: \(sync.source.name) doesn't share what's playing")
+                        .foregroundStyle(Theme.textDim)
+                } else if let track = spotify.track, track.playing {
                     Text("\(track.name) · \(track.artist)").foregroundStyle(Theme.good)
                 } else {
                     Text("Shows for 30 s when a song starts").foregroundStyle(Theme.textDim)

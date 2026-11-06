@@ -211,6 +211,20 @@ final class Mixer {
         save()
     }
 
+    /// Puts one music app on stream and mutes the other music apps there. The
+    /// selected app gets a channel if it has none yet (and is installed).
+    func selectMusicApp(_ app: MusicApp) {
+        if appsSupported, !channels.contains(where: { $0.id == app.rawValue }),
+           NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.rawValue) != nil {
+            addApp(bundleID: app.rawValue, name: app.name)
+        }
+        for other in MusicApp.allCases {
+            guard var ch = channels.first(where: { $0.id == other.rawValue }) else { continue }
+            ch.streamMuted = other != app
+            update(ch)
+        }
+    }
+
     func addApp(bundleID: String, name: String) {
         guard !channels.contains(where: { $0.id == bundleID }) else { return }
         let i = omni_mixer_add_app(bundleID)
@@ -578,7 +592,7 @@ struct MicSettings: View {
             Text("Turned-off plugins aren't loaded at all.")
                 .font(.system(size: 10)).foregroundStyle(Theme.textDim)
 
-            Text("Match Spotify").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
+            Text("Match the music").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textDim)
             MusicSyncControls()
         }
         .padding(12)
@@ -650,7 +664,7 @@ struct MusicSyncControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("Muze follows Spotify's key and tempo", isOn: $sync.enabled)
+            Toggle("Muze follows \(sync.source.name)'s key and tempo", isOn: $sync.enabled)
                 .toggleStyle(.switch)
                 .controlSize(.mini)
                 .font(.system(size: 11))
@@ -660,13 +674,13 @@ struct MusicSyncControls: View {
                 .foregroundStyle(sync.following && sync.bpm != nil ? Theme.good : Theme.textDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .help("Muze Auto Key listens to the Spotify channel and sends its key to Muze (Key Link: Follow); OmniCast tracks the beat and gives Muze the tempo.")
+        .help("Muze Auto Key listens to the music app's channel and sends its key to Muze (Key Link: Follow); OmniCast tracks the beat and gives Muze the tempo. Switch the app under Sources → Music.")
     }
 
     private var status: String {
         if !sync.autoKeyInstalled { return "Needs Muze Auto Key installed" }
         if !sync.enabled { return "Off" }
-        if !sync.following { return "Give Spotify a channel with + in the mixer" }
+        if !sync.following { return "Give \(sync.source.name) a channel with + in the mixer" }
         if !mixer.pluginsOn[1] { return "Turn Muze on above" }
         let key = sync.key ?? "listening…"
         let tempo = sync.bpm.map { "\(Int($0.rounded())) BPM" } ?? "finding the beat…"
