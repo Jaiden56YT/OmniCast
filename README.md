@@ -110,13 +110,19 @@ stream. The selected app gets a mixer channel if it has none, is unmuted on
 stream, and the other is muted on stream (so also in Discord's Go Live audio).
 Muze follows the selected app's key and tempo.
 
-The now-playing card shows only for Spotify: a card with the album art, song and
-artist fades in when a song starts (or resumes), stays 30 seconds and fades out;
-pausing hides it. It sits in a corner of the 16:9 canvas (and above the camera
-on 9:16), and isn't rendered at all while faded out. It reads Spotify's own
-play/pause announcements, so it needs no login. [untitled] doesn't announce its
-songs, and macOS only shares Now Playing with Apple's own apps, so there's no
-card for it.
+The now-playing card shows the selected app's song: album art, song and artist
+fade in when a song starts (or resumes), stay 30 seconds and fade out; pausing
+hides it. It sits in a corner of the 16:9 canvas (and above the camera on 9:16),
+and isn't rendered at all while faded out.
+
+- **Spotify**: read from Spotify's own play/pause announcements, so it needs no
+  login; art from Spotify's public oEmbed.
+- **[untitled]**: it doesn't announce its songs, and macOS keeps Now Playing to
+  Apple's own apps, so OmniCast reads [untitled]'s player bar through
+  Accessibility (allow OmniCast once in System Settings → Privacy & Security →
+  Accessibility). The art is grabbed from [untitled]'s window: the big cover when
+  the playing album's page is open, otherwise the player bar's thumbnail.
+  [untitled]'s window has to stay open (it can be behind other windows).
 
 ## Discord call overlay
 

@@ -3,12 +3,13 @@ import Foundation
 import Observation
 import OmniEngine
 
-/// A "now playing" card for Spotify. It fades in when a song starts (or playback
-/// resumes), stays for `holdSeconds`, then fades out; pausing fades it out at once.
+/// A "now playing" card for the music app on stream (Sources → Music). It fades in
+/// when a song starts (or playback resumes), stays for `holdSeconds`, then fades
+/// out; pausing fades it out at once.
 ///
 /// Spotify posts every play/pause/track change as a distributed notification, so
-/// this needs no permission or API key. Album art comes from Spotify's public
-/// oEmbed endpoint.
+/// that needs no permission or API key; album art comes from Spotify's public
+/// oEmbed endpoint. [untitled] is read from its player bar (UntitledNowPlaying).
 @MainActor
 @Observable
 final class SpotifyOverlay {
@@ -34,6 +35,7 @@ final class SpotifyOverlay {
         var name: String
         var artist: String
         var playing: Bool
+        var source: MusicApp
     }
 
     var enabled = UserDefaults.standard.object(forKey: "spotify.enabled") as? Bool ?? true {
@@ -58,7 +60,10 @@ final class SpotifyOverlay {
     }
 
     let holdSeconds: TimeInterval = 30
-    private(set) var track: Track?
+    /// The latest song from each music app.
+    private(set) var tracks: [MusicApp: Track] = [:]
+    /// The selected music app's song.
+    var track: Track? { tracks[MusicSync.shared.source] }
 
     private static let key = "spotify"
     private static let cardSize = CGSize(width: 640, height: 152)
@@ -87,25 +92,33 @@ final class SpotifyOverlay {
             let info = note.userInfo ?? [:]
             MainActor.assumeIsolated { SpotifyOverlay.shared.playbackChanged(info) }
         }
+        UntitledNowPlaying.shared.update()
     }
 
     /// Shows the card now, with the current song or a sample, so it can be checked.
     func preview() {
-        show(track ?? Track(id: "", name: "Song title goes here", artist: "Artist name", playing: true))
+        show(track ?? Track(id: "", name: "Song title goes here", artist: "Artist name", playing: true,
+                            source: MusicSync.shared.source))
     }
 
     private func playbackChanged(_ info: [AnyHashable: Any]) {
-        let playing = info["Player State"] as? String == "Playing"
-        let new = Track(id: info["Track ID"] as? String ?? "",
-                        name: info["Name"] as? String ?? "",
-                        artist: info["Artist"] as? String ?? "",
-                        playing: playing)
-        let resumed = playing && track?.playing == false
-        let spotifySelected = MusicSync.shared.source == .spotify
-        if new.id != track?.id && spotifySelected { MusicSync.shared.songChanged() }
-        track = new
-        guard enabled, spotifySelected else { return }
-        if !playing {
+        received(Track(id: info["Track ID"] as? String ?? "",
+                       name: info["Name"] as? String ?? "",
+                       artist: info["Artist"] as? String ?? "",
+                       playing: info["Player State"] as? String == "Playing",
+                       source: .spotify))
+    }
+
+    /// A music app's current song (called on every change, or every poll).
+    func received(_ new: Track) {
+        let old = tracks[new.source]
+        guard new != old else { return }
+        let resumed = new.playing && old?.playing == false
+        let selected = MusicSync.shared.source == new.source
+        if new.id != old?.id && selected { MusicSync.shared.songChanged() }
+        tracks[new.source] = new
+        guard enabled, selected else { return }
+        if !new.playing {
             shownID = nil
             fade(to: 0)
         } else if new.id != shownID || resumed, !new.name.isEmpty {
@@ -113,14 +126,14 @@ final class SpotifyOverlay {
         }
     }
 
-    /// The music switch moved: hide the card for other apps, or show the Spotify
-    /// song that's already playing when Spotify comes back.
+    /// The music switch moved: show the newly selected app's song if it's playing.
     func sourceChanged() {
         shownID = nil
-        if MusicSync.shared.source != .spotify {
-            fade(to: 0)
-        } else if enabled, let track, track.playing, !track.name.isEmpty {
+        UntitledNowPlaying.shared.update()
+        if enabled, let track, track.playing, !track.name.isEmpty {
             show(track)
+        } else {
+            fade(to: 0)
         }
     }
 
@@ -130,9 +143,12 @@ final class SpotifyOverlay {
         shownID = track.id
         renderTask?.cancel()
         renderTask = Task {
-            let art = await Self.artwork(for: track.id)
+            let art = track.source == .spotify ? await Self.artwork(for: track.id)
+                                               : await UntitledNowPlaying.shared.artwork()
             guard !Task.isCancelled else { return }
             guard Self.writePNG(Self.card(for: track, art: art), to: imageURL) else { return }
+            // A song from the app that's no longer selected arrived late.
+            guard track.source == MusicSync.shared.source || track.id.isEmpty else { return }
             omni_layer_set_image(Self.key, imageURL.path)
             place()
             fade(to: 1)
@@ -183,6 +199,11 @@ final class SpotifyOverlay {
     // MARK: Card image
 
     private static let green = NSColor(red: 0.11, green: 0.73, blue: 0.33, alpha: 1)
+
+    /// The "Now playing" colour: Spotify's green, or white for [untitled].
+    private static func accent(_ source: MusicApp) -> NSColor {
+        source == .spotify ? green : NSColor(white: 0.92, alpha: 1)
+    }
 
     /// "spotify:track:ID" → album art via oEmbed (no key needed).
     private static func artwork(for trackID: String) async -> NSImage? {
@@ -247,13 +268,13 @@ final class SpotifyOverlay {
         var x = textX
         for (i, h) in [10.0, 16.0, 12.0].enumerated() {
             let bar = CGRect(x: x + Double(i) * 6, y: 106, width: 3.5, height: h)
-            green.setFill()
+            accent(track.source).setFill()
             NSBezierPath(roundedRect: bar, xRadius: 1.75, yRadius: 1.75).fill()
         }
         x += 26
         NSAttributedString(string: "Now playing", attributes: [
             .font: NSFont.systemFont(ofSize: 17, weight: .semibold),
-            .foregroundColor: green,
+            .foregroundColor: accent(track.source),
         ]).draw(at: CGPoint(x: x, y: 103))
 
         NSAttributedString(string: track.name, attributes: [
@@ -282,6 +303,7 @@ import SwiftUI
 struct SpotifySourceRow: View {
     @Bindable private var spotify = SpotifyOverlay.shared
     @Bindable private var sync = MusicSync.shared
+    private var untitled: UntitledNowPlaying { .shared }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -324,9 +346,10 @@ struct SpotifySourceRow: View {
             .help("Which app's music is on stream. The other is muted on stream, and Muze follows this one.")
 
             Group {
-                if sync.source != .spotify {
-                    Text("No song card: \(sync.source.name) doesn't share what's playing")
-                        .foregroundStyle(Theme.textDim)
+                if sync.source == .untitled && !untitled.trusted {
+                    Button("Allow Accessibility to show [untitled] songs…") { untitled.openSettings() }
+                        .buttonStyle(.link)
+                        .help("OmniCast reads the song from [untitled]'s player bar. Turn OmniCast on in System Settings → Privacy & Security → Accessibility.")
                 } else if let track = spotify.track, track.playing {
                     Text("\(track.name) · \(track.artist)").foregroundStyle(Theme.good)
                 } else {
