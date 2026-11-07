@@ -5,3 +5,4 @@ vendor/obs-runtime/
 vendor/obs-runtime.tmp/
 vendor/include/simde/
 .DS_Store
+vendor/downloads/

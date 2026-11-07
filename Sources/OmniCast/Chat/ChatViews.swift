@@ -56,9 +56,9 @@ struct ChatSettingsView: View {
     var body: some View {
         Form {
             Section {
-                channel(.youtube, "YouTube handle", text: $youtube, prompt: "Jaiden56yt")
-                channel(.twitch, "Twitch channel", text: $twitch, prompt: "J4iden56")
-                channel(.kick, "Kick channel", text: $kick, prompt: "Jaiden56")
+                channel(.youtube, "YouTube handle", text: $youtube, prompt: "yourhandle")
+                channel(.twitch, "Twitch channel", text: $twitch, prompt: "yourchannel")
+                channel(.kick, "Kick channel", text: $kick, prompt: "yourchannel")
                 Button("Save and reconnect") {
                     var s = hub.settings
                     s.youtube = youtube.trimmingCharacters(in: .whitespaces)

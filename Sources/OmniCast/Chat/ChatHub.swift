@@ -8,9 +8,9 @@ final class ChatHub {
     static let shared = ChatHub()
 
     struct Settings: Codable, Equatable {
-        var youtube = "Jaiden56yt"
-        var twitch = "J4iden56"
-        var kick = "Jaiden56"
+        var youtube = ""
+        var twitch = ""
+        var kick = ""
         var enabled: Set<ChatPlatform> = Set(ChatPlatform.allCases)
         /// For when Kick blocks the channel lookup: the chatroom number from kick.com.
         var kickChatroom: Int?
@@ -77,7 +77,7 @@ final class ChatHub {
             (.kick, "ItsSoraval", "#53FC18", [], "I DONT HAVE THAT DUDE"),
             (.youtube, "BrandonSaber", nil, [.moderator], "wait you mean 1400 right?"),
             (.twitch, "T3mpex", "#9B7BFF", [.vip], "I gotta see the concept skins before I attempt getting this token"),
-            (.youtube, "Jaiden56yt", nil, [.owner], "yo welcome in everybody"),
+            (.youtube, "YourChannel", nil, [.owner], "yo welcome in everybody"),
         ]
         for (p, name, color, badges, text) in samples {
             add(ChatMessage(id: UUID().uuidString, platform: p, author: name, color: color, badges: badges,

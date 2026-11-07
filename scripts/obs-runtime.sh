@@ -1,8 +1,9 @@
 #!/bin/zsh
 # Copies libobs, the libraries it links and the OBS plugins OmniCast loads out of
 # OBS.app into vendor/obs-runtime. The build links against that copy and
-# bundle.sh puts it inside OmniCast.app, so OBS.app is only needed the first
-# time (or with --refresh after updating OBS.app and the headers).
+# bundle.sh puts it inside OmniCast.app. OBS.app is used if it's installed;
+# otherwise the official OBS release disk image is downloaded (checksum-pinned)
+# and read without installing anything. This runs once (or with --refresh).
 #
 #   OBS_APP=/path/to/OBS.app ./scripts/obs-runtime.sh [--refresh]
 set -euo pipefail
@@ -33,13 +34,31 @@ if [[ ${1:-} != --refresh && -f $cache/STAMP && "$(tail -n +2 $cache/STAMP)" == 
 fi
 
 if [[ ! -d $OBS_APP ]]; then
-	if [[ -d $cache/Frameworks ]]; then
+	if [[ -d $cache/Frameworks && ${1:-} != --refresh ]]; then
 		echo "warning: $OBS_APP not found, keeping the cached copy in $cache as it is" >&2
 		exit 0
 	fi
-	echo "error: $OBS_APP not found and there is no cached copy in $cache." >&2
-	echo "Install OBS.app (any copy will do: OBS_APP=/path/to/OBS.app) to fill the cache once." >&2
-	exit 1
+	# No OBS installed: take OBS.app from the official release disk image, checked
+	# against its published SHA-256, without installing it.
+	dmg_version=32.0.4
+	dmg_name=OBS-Studio-$dmg_version-macOS-Apple.dmg
+	dmg_sha256=7c056644636a794cb18281af98d54b5795ad8b0985e950d93b8c510b645b6298
+	dmg=vendor/downloads/$dmg_name
+	mkdir -p vendor/downloads
+	if [[ ! -f $dmg ]] || [[ "$(shasum -a 256 "$dmg" | cut -d' ' -f1)" != $dmg_sha256 ]]; then
+		echo "Downloading OBS $dmg_version from GitHub (about 190 MB, once)..."
+		curl -fL --progress-bar -o "$dmg.part" \
+			"https://github.com/obsproject/obs-studio/releases/download/$dmg_version/$dmg_name"
+		mv "$dmg.part" "$dmg"
+	fi
+	if [[ "$(shasum -a 256 "$dmg" | cut -d' ' -f1)" != $dmg_sha256 ]]; then
+		echo "error: $dmg doesn't match the published SHA-256; delete it and try again" >&2
+		exit 1
+	fi
+	mnt=$(mktemp -d /tmp/omnicast-obs.XXXXXX)
+	hdiutil attach -quiet -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+	trap 'hdiutil detach -quiet "$mnt" 2>/dev/null; rmdir "$mnt" 2>/dev/null' EXIT
+	OBS_APP=$mnt/OBS.app
 fi
 
 version=$(defaults read "$OBS_APP/Contents/Info.plist" CFBundleShortVersionString)

@@ -1,7 +1,7 @@
 #!/bin/zsh
-# Copies libobs and the OBS plugins OmniCast uses out of OBS.app into
-# vendor/obs-runtime (once), then fetches the libobs headers of the same version
-# and the simde headers they need. After the first run OBS.app can be deleted.
+# Copies libobs and the OBS plugins OmniCast uses into vendor/obs-runtime (once,
+# from OBS.app if installed, otherwise from the official OBS download), then
+# fetches the libobs headers of the same version and the simde headers they need.
 set -euo pipefail
 cd "${0:A:h}/.."
 
