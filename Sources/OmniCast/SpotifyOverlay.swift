@@ -9,7 +9,9 @@ import OmniEngine
 ///
 /// Spotify posts every play/pause/track change as a distributed notification, so
 /// that needs no permission or API key; album art comes from Spotify's public
-/// oEmbed endpoint. [untitled] is read from its player bar (UntitledNowPlaying).
+/// oEmbed endpoint. Apple Music announces its songs the same way
+/// (AppleMusicNowPlaying); YouTube Music is read from its window title and
+/// [untitled] from its player bar, both through Accessibility.
 @MainActor
 @Observable
 final class SpotifyOverlay {
@@ -92,7 +94,14 @@ final class SpotifyOverlay {
             let info = note.userInfo ?? [:]
             MainActor.assumeIsolated { SpotifyOverlay.shared.playbackChanged(info) }
         }
+        AppleMusicNowPlaying.start()
+        updateReaders()
+    }
+
+    /// Starts or stops the polling readers for the selected app.
+    private func updateReaders() {
         UntitledNowPlaying.shared.update()
+        YouTubeMusicNowPlaying.shared.update()
     }
 
     /// Shows the card now, with the current song or a sample, so it can be checked.
@@ -129,7 +138,7 @@ final class SpotifyOverlay {
     /// The music switch moved: show the newly selected app's song if it's playing.
     func sourceChanged() {
         shownID = nil
-        UntitledNowPlaying.shared.update()
+        updateReaders()
         if enabled, let track, track.playing, !track.name.isEmpty {
             show(track)
         } else {
@@ -143,8 +152,11 @@ final class SpotifyOverlay {
         shownID = track.id
         renderTask?.cancel()
         renderTask = Task {
-            let art = track.source == .spotify ? await Self.artwork(for: track.id)
-                                               : await UntitledNowPlaying.shared.artwork()
+            let art: NSImage? = switch track.source {
+            case .spotify: await Self.artwork(for: track.id)
+            case .untitled: await UntitledNowPlaying.shared.artwork()
+            case .appleMusic, .youtubeMusic: await ArtworkSearch.image(song: track.name, artist: track.artist)
+            }
             guard !Task.isCancelled else { return }
             guard Self.writePNG(Self.card(for: track, art: art), to: imageURL) else { return }
             // A song from the app that's no longer selected arrived late.
@@ -200,9 +212,14 @@ final class SpotifyOverlay {
 
     private static let green = NSColor(red: 0.11, green: 0.73, blue: 0.33, alpha: 1)
 
-    /// The "Now playing" colour: Spotify's green, or white for [untitled].
+    /// The "Now playing" colour, after each app's own.
     private static func accent(_ source: MusicApp) -> NSColor {
-        source == .spotify ? green : NSColor(white: 0.92, alpha: 1)
+        switch source {
+        case .spotify: green
+        case .appleMusic: NSColor(red: 0.98, green: 0.18, blue: 0.28, alpha: 1)
+        case .youtubeMusic: NSColor(red: 1.0, green: 0.2, blue: 0.2, alpha: 1)
+        case .untitled: NSColor(white: 0.92, alpha: 1)
+        }
     }
 
     /// "spotify:track:ID" → album art via oEmbed (no key needed).
@@ -336,20 +353,22 @@ struct SpotifySourceRow: View {
             .background(Theme.raised, in: RoundedRectangle(cornerRadius: 6))
 
             Picker("", selection: $sync.source) {
-                ForEach(MusicApp.allCases) { Text($0.name).tag($0) }
+                ForEach(MusicApp.allCases.filter { $0.installed || $0 == sync.source }) { Text($0.name).tag($0) }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .labelsHidden()
             .controlSize(.small)
             .padding(.leading, 26)
             .disabled(!Engine.shared.running)
-            .help("Which app's music is on stream. The other is muted on stream, and Muze follows this one.")
+            .help(sync.source == .youtubeMusic
+                  ? "YouTube Music plays in Chrome, so its channel is all of Chrome's sound. The other music apps are muted on stream, and Muze follows this one."
+                  : "Which app's music is on stream. The other music apps are muted on stream, and Muze follows this one.")
 
             Group {
-                if sync.source == .untitled && !untitled.trusted {
-                    Button("Allow Accessibility to show [untitled] songs…") { untitled.openSettings() }
+                if sync.source.needsAccessibility && !untitled.trusted {
+                    Button("Allow Accessibility to show \(sync.source.name) songs…") { untitled.openSettings() }
                         .buttonStyle(.link)
-                        .help("OmniCast reads the song from [untitled]'s player bar. Turn OmniCast on in System Settings → Privacy & Security → Accessibility.")
+                        .help("OmniCast reads the song from \(sync.source.name)'s window. Turn OmniCast on in System Settings → Privacy & Security → Accessibility.")
                 } else if let track = spotify.track, track.playing {
                     Text("\(track.name) · \(track.artist)").foregroundStyle(Theme.good)
                 } else {

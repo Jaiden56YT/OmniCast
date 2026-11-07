@@ -159,6 +159,8 @@ final class Mixer {
             if i >= 0 { indices[ch.id] = i }
         }
         channels.forEach(push)
+        // The selected music app has its channel and is the only one on stream.
+        selectMusicApp(MusicSync.shared.source)
         MusicSync.shared.applySource()
         omni_monitor_set_device(monitorDevice)
         started = true
@@ -214,13 +216,12 @@ final class Mixer {
     /// Puts one music app on stream and mutes the other music apps there. The
     /// selected app gets a channel if it has none yet (and is installed).
     func selectMusicApp(_ app: MusicApp) {
-        if appsSupported, !channels.contains(where: { $0.id == app.rawValue }),
-           NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.rawValue) != nil {
-            addApp(bundleID: app.rawValue, name: app.name)
+        if appsSupported, !channels.contains(where: { $0.id == app.channelID }), app.installed {
+            addApp(bundleID: app.channelID, name: app.channelName)
         }
-        for other in MusicApp.allCases {
-            guard var ch = channels.first(where: { $0.id == other.rawValue }) else { continue }
-            ch.streamMuted = other != app
+        for other in Set(MusicApp.allCases.map(\.channelID)) {
+            guard var ch = channels.first(where: { $0.id == other }) else { continue }
+            ch.streamMuted = other != app.channelID
             update(ch)
         }
     }

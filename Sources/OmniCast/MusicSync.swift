@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import OmniEngine
@@ -5,10 +6,30 @@ import OmniEngine
 /// The music apps the stream switches between. Only one is on stream at a time.
 enum MusicApp: String, CaseIterable, Identifiable {
     case spotify = "com.spotify.client"
+    case appleMusic = "com.apple.Music"
+    case youtubeMusic = "music.youtube.com"
     case untitled = "com.untitledinbrackets.untitled-macos"
 
     var id: String { rawValue }
-    var name: String { self == .spotify ? "Spotify" : "[untitled]" }
+
+    var name: String {
+        switch self {
+        case .spotify: "Spotify"
+        case .appleMusic: "Apple Music"
+        case .youtubeMusic: "YouTube Music"
+        case .untitled: "[untitled]"
+        }
+    }
+
+    /// The app whose audio is the music's mixer channel. YouTube Music plays inside
+    /// Chrome, so its channel is Chrome's (all of Chrome's sound).
+    var channelID: String { self == .youtubeMusic ? "com.google.Chrome" : rawValue }
+    var channelName: String { self == .youtubeMusic ? "Google Chrome" : name }
+
+    var installed: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: channelID) != nil }
+
+    /// Whether OmniCast reads the song through Accessibility (the others announce it).
+    var needsAccessibility: Bool { self == .untitled || self == .youtubeMusic }
 }
 
 /// Makes Muze follow the music playing in the selected music app: Muze Auto Key
@@ -57,7 +78,7 @@ final class MusicSync {
 
     /// Call when the mixer's channels change: follows the music app's channel if it has one.
     func applySource() {
-        let index = Mixer.shared.indices[source.rawValue]
+        let index = Mixer.shared.indices[source.channelID]
         following = enabled && index != nil
         let target = following ? index : nil
         if target != followedIndex {

@@ -143,26 +143,40 @@ Spotify's own tempo/key data isn't available to new apps (its API closed that
 in 2024), so this listens to the audio instead. Very fast songs (~170+) can be
 read wrong.
 
-## Music: Spotify or [untitled]
+## Music: Spotify, Apple Music, YouTube Music or [untitled]
 
-Sources → Music has a **Spotify | [untitled]** switch for which app's music is on
-stream. The selected app gets a mixer channel if it has none, is unmuted on
-stream, and the other is muted on stream (so also in Discord's Go Live audio).
+Sources → Music has a menu for which app's music is on stream: **Spotify**,
+**Apple Music**, **YouTube Music** or **[untitled]** (the ones you have installed).
+The selected app gets a mixer channel if it has none, is unmuted on stream, and
+the other music apps are muted on stream (so also in Discord's Go Live audio).
 Muze follows the selected app's key and tempo.
+
+YouTube Music has no Mac app of its own: it plays in Chrome (as a tab or an
+installed Chrome app), so its channel is **Google Chrome**, which means all of
+Chrome's sound. Switching to another music app mutes Chrome on stream.
 
 The now-playing card shows the selected app's song: album art, song and artist
 fade in when a song starts (or resumes), stay 30 seconds and fade out; pausing
 hides it. It sits in a corner of the 16:9 canvas (and above the camera on 9:16),
-and isn't rendered at all while faded out.
+and isn't rendered at all while faded out. "Now playing" takes each app's colour.
 
 - **Spotify**: read from Spotify's own play/pause announcements, so it needs no
   login; art from Spotify's public oEmbed.
+- **Apple Music**: read from Music's own play/pause announcements, no
+  permission needed; art from Apple's public iTunes Search.
+- **YouTube Music**: read from its window title ("Artist - Song | YouTube
+  Music"), with Chrome's "Audio playing" marker telling playing from paused.
+  Needs Accessibility (below). An upload whose title doesn't split into artist
+  and song is shown whole, with "YouTube Music" underneath. Art comes from
+  iTunes Search, which finds released songs; uploads get a ♪ placeholder.
 - **[untitled]**: it doesn't announce its songs, and macOS keeps Now Playing to
   Apple's own apps, so OmniCast reads [untitled]'s player bar through
-  Accessibility (allow OmniCast once in System Settings → Privacy & Security →
-  Accessibility). The art is grabbed from [untitled]'s window: the big cover when
+  Accessibility. The art is grabbed from [untitled]'s window: the big cover when
   the playing album's page is open, otherwise the player bar's thumbnail.
   [untitled]'s window has to stay open (it can be behind other windows).
+
+Accessibility, for YouTube Music and [untitled]: allow OmniCast once in System
+Settings → Privacy & Security → Accessibility. The Music row links there.
 
 ## Discord call overlay
 

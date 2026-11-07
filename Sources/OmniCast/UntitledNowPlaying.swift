@@ -29,10 +29,7 @@ final class UntitledNowPlaying {
     func update() {
         let want = MusicSync.shared.source == .untitled
         if want, timer == nil {
-            if !AXIsProcessTrusted() && !asked {
-                asked = true
-                requestAccess()
-            }
+            askForAccessOnce()
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
                 MainActor.assumeIsolated { UntitledNowPlaying.shared.poll() }
             }
@@ -42,6 +39,13 @@ final class UntitledNowPlaying {
             timer = nil
             bar = nil
         }
+    }
+
+    /// The first time a music app that's read through Accessibility is picked.
+    func askForAccessOnce() {
+        guard !AXIsProcessTrusted(), !asked else { return }
+        asked = true
+        requestAccess()
     }
 
     /// Shows macOS's prompt that leads to Privacy & Security → Accessibility.
