@@ -61,7 +61,7 @@ struct RecordingSettingsView: View {
             } header: {
                 Text("Encoding")
             } footer: {
-                Text("Recordings use a separate encode on the M4's media engine at 60 fps, so a low stream bitrate never lowers recording quality.")
+                Text("Recordings use a separate encode on the Mac's media engine at 60 fps, so a low stream bitrate never lowers recording quality.")
             }
             Section {
                 Toggle("Separate audio tracks", isOn: $engine.recordSettings.splitAudio)

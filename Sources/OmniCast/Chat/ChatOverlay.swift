@@ -3,8 +3,8 @@ import Foundation
 import Observation
 import OmniEngine
 
-/// Draws the merged chat onto the canvases, styled after the user's sona:
-/// heavy rounded type with a thick black outline (like the art's line work),
+/// Draws the merged chat onto the canvases in OmniCast's chat style:
+/// heavy rounded type with a thick black outline,
 /// platform icons, role badges and inline emotes, newest line at the bottom.
 ///
 /// Each canvas gets its own image layer, drawn at exactly the box's canvas
@@ -144,7 +144,7 @@ final class ChatOverlay {
 
     // MARK: Drawing
 
-    /// Bright picks from the sona's palette for names without their own colour.
+    /// Bright palette picks for names without their own colour.
     private static let palette: [NSColor] = ["#A78BFA", "#D46BFF", "#FF8FD0", "#6E8BFF", "#4ED1A1", "#FF7A59"].map(color)
 
     private func render(_ lines: [ChatMessage], size: CGSize) -> NSBitmapImageRep? {
@@ -231,7 +231,7 @@ final class ChatOverlay {
     }
 
     private func nameColor(_ m: ChatMessage) -> NSColor {
-        // You, in your sona's purple, on every platform.
+        // You, in the streamer purple, on every platform.
         if m.badges.contains(.owner) { return Self.color("#B794FF") }
         if let hex = m.color, var c = Optional(Self.color(hex)) {
             // Too-dark colours vanish over game footage: lift them.

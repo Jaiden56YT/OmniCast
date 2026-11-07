@@ -1,23 +1,64 @@
 # OmniCast
 
-Multistreaming for Apple Silicon: one app sends a 16:9 canvas to YouTube, Twitch
-and Kick and a 9:16 canvas to TikTok and Instagram at the same time.
+A streaming and recording app made for Mac. One app sends a **16:9** canvas to
+YouTube, Twitch and Kick and a **9:16** canvas to TikTok and Instagram at the same
+time, records either or both, and replaces the usual pile of streaming tools: an
+audio mixer with per-app channels, merged chat, a Discord call overlay, a
+now-playing card, a virtual camera, and Discord audio routing.
 
-It runs on libobs, the OBS engine, taken from the installed `/Applications/OBS.app`
-(32.0.4), so every OBS source, filter and encoder is available.
+It's built on libobs, the engine inside OBS Studio, with a native SwiftUI app on
+top: no Electron, no Qt.
 
-## Why it's fast on an M4
+## Requirements
 
-- **Metal renderer** (OBS's new libobs-metal), with OpenGL as a fallback (see Settings).
-- **Hardware H.264** through the VideoToolbox media engine (`ave.avc`), never x264.
-- **One encode per canvas**: every destination on a canvas shares the same encoder,
-  so adding a third horizontal platform costs upload bandwidth, not CPU/GPU.
-- NV12 output and CoreAudio AAC: formats Apple's encoders take directly.
-- Native arm64 SwiftUI app, no Electron, no Qt.
-- Previews draw each canvas's finished frame (no second composite) and pause
-  themselves when the window is hidden or minimised.
-- App Nap and timer coalescing are held off for the render/encode threads, and
-  the Mac can't idle-sleep while recording or live.
+- A Mac with **Apple silicon** (M1 or later) on **macOS 14.2** or later. (14.0
+  works, but per-app audio channels need 14.2.)
+- **Xcode 15.3** or later, or its Command Line Tools (Swift 5.10).
+- **[Homebrew](https://brew.sh)**, used once for the `simde` headers.
+
+Optional, for specific features:
+
+| Feature | Needs |
+|---|---|
+| Sending your mic or stream audio to Discord | [BlackHole](https://existential.audio/blackhole/) loopback devices (free) |
+| Mic effects | STACKS and/or Muze (Audio Unit plugins, sold separately); Muze Auto Key for key following |
+| Discord call overlay | the Discord app and a free Discord developer app (see below) |
+| Setting stream titles and games | free developer apps on Twitch, Kick and Google (see below) |
+| Virtual camera | OBS's camera extension, installed once by OBS Studio (see below) |
+
+## Quick start
+
+```sh
+git clone https://github.com/Jaiden56YT/OmniCast.git
+cd OmniCast
+./scripts/make-signing-cert.sh   # once: a local signing certificate, so macOS remembers permissions
+./scripts/bootstrap.sh           # once: gets libobs (OBS doesn't need to be installed)
+./scripts/bundle.sh              # builds build/OmniCast.app
+open build/OmniCast.app
+```
+
+## First run
+
+1. **Permissions.** macOS asks for the microphone and camera; allow both. Screen
+   Recording is asked for once: turn OmniCast on in System Settings → Privacy &
+   Security → Screen & System Audio Recording, then reopen OmniCast (or use "Allow
+   screen access…" under Display).
+2. **Destinations.** Click **+** in Destinations, pick the platform, paste your
+   stream key (from the platform's creator dashboard), and choose 16:9 or 9:16.
+   Keys are stored in the macOS keychain. Turn on the ones you want.
+3. **Sources.** Pick what the screen slot shows (a display, window, app or capture
+   card) and your camera. Turn on Chat, Music or the Discord call overlay if you
+   want them.
+4. **Audio.** The mic and system audio are there from the start. Use **+** to give
+   an app (a game, Spotify, Discord) its own channel with separate Stream and
+   Monitor (headphones) levels.
+5. **Go live** with Go Live (⇧⌘L) or **record** with Start Recording (⇧⌘R).
+   Recording settings (folder, 16:9 / 9:16 / both, separate audio tracks) are in
+   Settings → Recording.
+
+Everything else is optional and explained below.
+
+# Features
 
 ## Recording
 
@@ -28,7 +69,7 @@ It runs on libobs, the OBS engine, taken from the installed `/Applications/OBS.a
 - Track 1 = full mix, track 2 = desktop audio, track 3 = mic (toggle in Settings).
 - Start/stop with the Record button or ⇧⌘R; go live with ⇧⌘L.
 
-Measured on the M4 MacBook Air, recording both canvases at once for 30 s:
+Measured on an M4 MacBook Air, recording both canvases at once for 30 s:
 1800/1800 frames, every frame exactly 16.7 ms apart, 0 encoder drops.
 
 ## What the screen slot captures
@@ -47,24 +88,6 @@ name are matched automatically.
 
 Hidden or unused cameras and capture cards are closed, not just hidden: the light
 goes off, no frames cross USB, and other apps can use them.
-
-## Merged chat
-
-YouTube, Twitch and Kick chat in one overlay, read only (nothing is ever posted):
-
-- **Twitch**: Twitch's official chat connection, anonymously.
-- **Kick**: the realtime feed kick.com itself uses (a guest token from Kick's
-  realtime API, no login; unofficial).
-- **YouTube**: the live-chat feed youtube.com's chat window uses, found from the
-  channel's /live page once you're live. No API key or quota; unofficial.
-- Instagram doesn't let apps read live chat, so it can't be included.
-
-Lines are drawn in the sona's style: heavy rounded type with a thick black
-outline, platform icons, role badges (crown for you, wrench for mods, diamond for
-VIPs, star for members), Twitch/Kick name colours and palette colours for YouTube,
-inline emotes. Channels, text size and how long lines stay up are in
-Settings → Chat; move and resize the box with Arrange. Sources → Chat → ⋯ has
-"Add test messages" for setting it up offline.
 
 ## Stream info (titles and games)
 
@@ -85,6 +108,23 @@ Settings → Accounts, with a free developer app you register yourself:
 
 Sign-ins use a loopback-only redirect (never reachable from the network) and
 PKCE; tokens and secrets live in the keychain and refresh on their own.
+
+## Merged chat
+
+YouTube, Twitch and Kick chat in one overlay, read only (nothing is ever posted):
+
+- **Twitch**: Twitch's official chat connection, anonymously.
+- **Kick**: the realtime feed kick.com itself uses (a guest token from Kick's
+  realtime API, no login; unofficial).
+- **YouTube**: the live-chat feed youtube.com's chat window uses, found from the
+  channel's /live page once you're live. No API key or quota; unofficial.
+- Instagram doesn't let apps read live chat, so it can't be included.
+
+Lines are drawn with heavy rounded type and a thick black outline, platform icons, role badges (crown for you, wrench for mods, diamond for
+VIPs, star for members), Twitch/Kick name colours and palette colours for YouTube,
+inline emotes. Channels, text size and how long lines stay up are in
+Settings → Chat; move and resize the box with Arrange. Sources → Chat → ⋯ has
+"Add test messages" for setting it up offline.
 
 ## Muze follows the music
 
@@ -163,7 +203,9 @@ Both follow the Stream faders and mutes, like the stream. Voice and Go Live audi
 each need their own loopback device (e.g. BlackHole 2ch and BlackHole 16ch).
 
 Install BlackHole with `brew install --cask blackhole-2ch` (and `blackhole-16ch`
-for a second device); each asks for your password. Pro Tools Audio Bridge, Steam
+for a second device); each asks for your password. The new device shows up after a
+restart, or right away after `sudo killall coreaudiod` (Mac audio cuts out for a
+second; reopen OmniCast afterwards). Pro Tools Audio Bridge, Steam
 Streaming Microphone and Zoom's device aren't offered, because they only carry
 audio while their own app drives them. Turn off Discord's noise suppression
 (Krisp) if it smears Muze's harmonies.
@@ -190,10 +232,24 @@ pick the camera under Sources → Camera.
 so the camera never makes the vertical canvas, or a recording of it, skip frames.
 Measured: 60 fps into the camera, 0 skipped frames on either canvas.
 
-Screen Recording permission is requested once; after that, use "Allow screen
-access…" under Display.
+# How it's built
 
-To check frame pacing yourself:
+## Why it's fast
+
+- **Metal renderer** (OBS's new libobs-metal), with OpenGL as a fallback (see Settings).
+- **Hardware H.264** through the VideoToolbox media engine (`ave.avc`), never x264.
+- **One encode per canvas**: every destination on a canvas shares the same encoder,
+  so adding a third horizontal platform costs upload bandwidth, not CPU/GPU.
+- NV12 output and CoreAudio AAC: formats Apple's encoders take directly.
+- Native arm64 SwiftUI app, no Electron, no Qt.
+- Previews draw each canvas's finished frame (no second composite) and pause
+  themselves when the window is hidden or minimised.
+- App Nap and timer coalescing are held off for the render/encode threads, and
+  the Mac can't idle-sleep while recording or live.
+
+## Checking performance
+
+To check frame pacing on your Mac (records both canvases for 30 seconds):
 
 ```sh
 build/OmniCast.app/Contents/MacOS/OmniCast --benchmark-record 30 --folder ~/Desktop/bench --target both
@@ -201,23 +257,20 @@ build/OmniCast.app/Contents/MacOS/OmniCast --benchmark-record 30 --folder ~/Desk
 
 It writes `benchmark.json` (fps, render time, missed frames) next to the recordings.
 
-## Build
+## Building in detail
 
-```sh
-./scripts/bootstrap.sh   # copies libobs out of OBS.app, fetches matching headers and simde
-./scripts/bundle.sh      # builds build/OmniCast.app
-open build/OmniCast.app
-```
+OBS doesn't need to be installed. `scripts/obs-runtime.sh` (run by both scripts)
+copies libobs.framework, the Metal and OpenGL renderers, the FFmpeg / x264 /
+mbedTLS / SRT / RIST libraries they link, and the nine OBS plugins OmniCast loads
+(capture, VideoToolbox, x264, AAC, RTMP/MP4 outputs, RTMP service, image source,
+colour filter) into `vendor/obs-runtime` (about 75 MB, git-ignored). It takes
+them from `/Applications/OBS.app` if that's there; otherwise it downloads the
+official OBS 32.0.4 disk image from GitHub (about 190 MB, once, checked against
+its SHA-256) and reads them from it without installing OBS.
 
-OBS.app is only needed once, as the source of the libobs binaries.
-`scripts/obs-runtime.sh` (run by both scripts) copies libobs.framework, the Metal
-and OpenGL renderers, the FFmpeg / x264 / mbedTLS / SRT / RIST libraries they link,
-and the nine OBS plugins OmniCast loads (capture, VideoToolbox, x264, AAC,
-RTMP/MP4 outputs, RTMP service, image source, colour filter) into
-`vendor/obs-runtime` (about 75 MB, git-ignored). The build links against that
-copy and `bundle.sh` copies it into `OmniCast.app/Contents/Frameworks` and
-`PlugIns`, then signs every library and plugin and the app. After the first
-build OBS.app can be deleted. Every library uses an `@rpath/…` install name and
+The build links against that copy, and `bundle.sh` copies it into
+`OmniCast.app/Contents/Frameworks` and `PlugIns`, then signs every library,
+plugin and the app. Every library uses an `@rpath/…` install name and
 `@executable_path/../Frameworks` as its rpath, so they load from inside the app
 as they are.
 
@@ -230,7 +283,7 @@ OBS_APP=/path/to/OBS.app ./scripts/obs-runtime.sh --refresh
 
 To add a plugin (say OmniCast starts using a source from `obs-transitions`), add
 it to `plugins` in `scripts/obs-runtime.sh`. The script notices the list
-changed and copies it again, so OBS.app has to be there for that.
+changed and copies it again.
 
 Run `./scripts/make-signing-cert.sh` once. It creates a self-signed code-signing
 certificate named **OmniCast Local** in your login keychain, and `bundle.sh` signs
@@ -239,14 +292,19 @@ rebuilds. Without it the app is signed ad hoc and macOS asks again after every
 build (and a Screen Recording switch left on from an older build doesn't cover
 the new one: remove OmniCast from the list and allow it again).
 
-To delete OBS, remove `/Applications/OBS.app` (and `~/Library/Application Support/obs-studio`
-if you want its settings gone). The virtual camera stays (see "Virtual camera").
+## Project layout
 
-## Layout
-
-- `Sources/OmniEngine`: C/Objective-C over libobs (canvases, scenes, encoders, RTMP outputs, previews).
-- `Sources/OmniCast`: SwiftUI app. Stream keys are stored in the macOS keychain.
+- `Sources/OmniEngine`: a C API (`include/OmniEngine.h`) in C/Objective-C over
+  libobs: canvases, sources, encoders, outputs, recording, overlays, the audio
+  mixer and the virtual camera.
+- `Sources/OmniCast`: the SwiftUI app. Stream keys, tokens and secrets are stored
+  in the macOS keychain.
+- `scripts/`: getting libobs, building and signing the app.
+- `docs/WINDOWS-APP.md`: the brief for OmniCast for Windows, a separate app made
+  for Windows.
 
 ## License
 
-libobs is GPL-2.0-or-later, so OmniCast is too.
+OmniCast is free software under the GNU General Public License, version 2 or
+later (see `LICENSE`), because libobs is GPL-2.0-or-later. OBS and OBS Studio
+are trademarks of the OBS Project; OmniCast isn't affiliated with it.
