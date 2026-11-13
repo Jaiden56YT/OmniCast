@@ -9,6 +9,9 @@ now-playing card, a virtual camera, and Discord audio routing.
 It's built on libobs, the engine inside OBS Studio, with a native SwiftUI app on
 top: no Electron, no Qt.
 
+**On Windows?** OmniCast for Windows is its own app, made for Windows: see
+[windows/README.md](windows/README.md).
+
 ## Requirements
 
 - A Mac with **Apple silicon** (M1 or later) on **macOS 14.2** or later. (14.0
@@ -300,8 +303,9 @@ the new one: remove OmniCast from the list and allow it again).
 - `Sources/OmniCast`: the SwiftUI app. Stream keys, tokens and secrets are stored
   in the macOS keychain.
 - `scripts/`: getting libobs, building and signing the app.
-- `docs/WINDOWS-APP.md`: the brief for OmniCast for Windows, a separate app made
-  for Windows.
+- `windows/`: OmniCast for Windows, a separate app made for Windows (C++ engine
+  over libobs, WinUI 3 app). See [windows/README.md](windows/README.md).
+- `docs/WINDOWS-APP.md`: the brief OmniCast for Windows was built from.
 
 ## License
 

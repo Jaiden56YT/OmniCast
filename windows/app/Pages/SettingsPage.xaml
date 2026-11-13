@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="OmniCast.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Page.Resources>
+        <!-- A row in the Windows 11 Settings style: title and description on
+             the left, the control on the right. -->
+        <Style x:Key="RowStyle" TargetType="Grid">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+            <Setter Property="Padding" Value="16,12" />
+            <Setter Property="MinHeight" Value="64" />
+            <Setter Property="ColumnSpacing" Value="16" />
+        </Style>
+        <Style x:Key="RowTitle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}" />
+        <Style x:Key="RowDescription" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+            <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </Page.Resources>
+
+    <ScrollViewer>
+        <StackPanel Padding="24,4,24,32" Spacing="4" MaxWidth="1000" HorizontalAlignment="Stretch">
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,8" />
+
+            <!-- Video -->
+            <TextBlock Text="Video" Style="{StaticResource SectionHeaderStyle}" Margin="0,8,0,8" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Resolution" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="ResolutionHint" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="ResolutionBox" Grid.Column="1" VerticalAlignment="Center" MinWidth="200" SelectionChanged="Video_Changed">
+                    <x:String>720p (1280×720)</x:String>
+                    <x:String>1080p (1920×1080)</x:String>
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Frame rate" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Both canvases run at the same rate." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="FpsBox" Grid.Column="1" VerticalAlignment="Center" MinWidth="200" SelectionChanged="Video_Changed">
+                    <x:String>60 fps</x:String>
+                    <x:String>30 fps</x:String>
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Stream bitrate" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Kbps per canvas. Twitch allows up to 6000; YouTube takes more. Keep the total under about 75% of your upload speed." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <NumberBox x:Name="WideKbps" Grid.Column="1" Header="16:9" Minimum="500" Maximum="51000" SmallChange="500" LargeChange="1000"
+                           SpinButtonPlacementMode="Compact" Width="120" ValueChanged="Video_Changed" />
+                <NumberBox x:Name="TallKbps" Grid.Column="2" Header="9:16" Minimum="500" Maximum="51000" SmallChange="500" LargeChange="1000"
+                           SpinButtonPlacementMode="Compact" Width="120" ValueChanged="Video_Changed" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Encoder" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="EncoderText" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <Button x:Name="ApplyVideo" Grid.Column="1" Content="Apply video changes" Style="{StaticResource AccentButtonStyle}"
+                        VerticalAlignment="Center" IsEnabled="False" Click="ApplyVideo_Click" />
+            </Grid>
+            <InfoBar x:Name="VideoError" Severity="Error" IsClosable="True" />
+
+            <!-- Recording -->
+            <TextBlock Text="Recording" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Folder" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="FolderText" Style="{StaticResource RowDescription}" IsTextSelectionEnabled="True" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Open" VerticalAlignment="Center" Click="OpenFolder_Click" />
+                <Button Grid.Column="2" Content="Change…" VerticalAlignment="Center" Click="ChangeFolder_Click" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="What to record" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Each canvas is its own MP4. Files stay playable even if the PC crashes mid-recording." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <CheckBox x:Name="RecWide" Content="16:9" Click="Recording_Changed" MinWidth="0" />
+                    <CheckBox x:Name="RecTall" Content="9:16" Click="Recording_Changed" MinWidth="0" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Separate audio tracks" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Track 1 is the full mix; track 2 is desktop audio only; track 3 is the mic only." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="SplitAudio" Grid.Column="1" Toggled="Recording_Changed" OnContent="On" OffContent="Off" MinWidth="0" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Recording quality" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="QualityHint" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <Slider x:Name="QualitySlider" Grid.Column="1" Width="200" Minimum="14" Maximum="30" StepFrequency="1"
+                        IsDirectionReversed="True" VerticalAlignment="Center" ValueChanged="Recording_Changed"
+                        AutomationProperties.Name="Recording quality (lower is better)" />
+            </Grid>
+
+            <!-- Audio -->
+            <TextBlock Text="Audio" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Mic" Style="{StaticResource RowTitle}" VerticalAlignment="Center" />
+                <ComboBox x:Name="MicBox" Grid.Column="1" MinWidth="280" DisplayMemberPath="Name" SelectionChanged="Audio_Changed" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Desktop audio" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Everything this output device plays goes on stream." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="DesktopBox" Grid.Column="1" MinWidth="280" DisplayMemberPath="Name" SelectionChanged="Audio_Changed" />
+            </Grid>
+
+            <!-- App -->
+            <TextBlock Text="App" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Live preview" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Turn off to save a little GPU. Previews already pause while the window is minimised or hidden." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="PreviewToggle" Grid.Column="1" Toggled="App_Changed" OnContent="On" OffContent="Off" MinWidth="0" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Closing the window keeps OmniCast in the tray" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="So a stream or recording isn't cut by accident. Quit from the tray icon's menu." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="TrayToggle" Grid.Column="1" Toggled="App_Changed" OnContent="On" OffContent="Off" MinWidth="0" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Start with Windows" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Opens in the tray when you sign in." Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="StartupToggle" Grid.Column="1" Toggled="App_Changed" OnContent="On" OffContent="Off" MinWidth="0" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="Keyboard shortcuts (work in any app)" Style="{StaticResource RowTitle}" />
+                    <TextBlock Text="Ctrl+Alt+L go live / end stream  ·  Ctrl+Alt+R start / stop recording  ·  Ctrl+Alt+M mute mic  ·  Ctrl+Alt+1 to 9 switch to scene 1 to 9" Style="{StaticResource RowDescription}" />
+                    <TextBlock x:Name="HotkeyConflicts" Style="{StaticResource RowDescription}" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                </StackPanel>
+            </Grid>
+
+            <!-- About -->
+            <TextBlock Text="About" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock x:Name="VersionText" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}"
+                               Text="Free software under the GNU General Public License, version 2 or later. Built on libobs, the engine inside OBS Studio. OBS and OBS Studio are trademarks of the OBS Project; OmniCast isn't affiliated with it." />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Open logs" VerticalAlignment="Center" Click="OpenLogs_Click" />
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

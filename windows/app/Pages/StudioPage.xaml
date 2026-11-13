@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="OmniCast.Pages.StudioPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+
+    <Page.Resources>
+        <Style x:Key="PreviewLabel" TargetType="Border">
+            <Setter Property="Background" Value="#99000000" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="Margin" Value="10" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="VerticalAlignment" Value="Top" />
+        </Style>
+    </Page.Resources>
+
+    <Grid Padding="24,4,24,24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="180" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <TextBlock Text="Studio" Style="{StaticResource TitleTextBlockStyle}" />
+            <TextBlock x:Name="StatsText" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                       Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Grid>
+
+        <!-- Scenes: click one to put it on air with the transition on the right. -->
+        <Grid Grid.Row="1" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ScrollViewer HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled">
+                <StackPanel Orientation="Horizontal" Spacing="8" Padding="0,0,0,4">
+                    <StackPanel x:Name="SceneButtons" Orientation="Horizontal" Spacing="8" />
+                    <Button Click="AddScene_Click" AutomationProperties.Name="Add scene"
+                            ToolTipService.ToolTip="Add a scene (starts as a copy of the one on air)">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE710;" FontSize="12" />
+                            <TextBlock Text="Scene" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </ScrollViewer>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top">
+                <TextBlock Text="Transition" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <ComboBox x:Name="TransitionBox" Width="140" SelectionChanged="Transition_Changed" AutomationProperties.Name="Transition">
+                    <x:String>Cut</x:String>
+                    <x:String>Fade</x:String>
+                    <x:String>Fade to black</x:String>
+                    <x:String>Slide</x:String>
+                    <x:String>Swipe</x:String>
+                </ComboBox>
+                <NumberBox x:Name="TransitionMsBox" Width="96" Minimum="50" Maximum="5000" SmallChange="50" LargeChange="250"
+                           SpinButtonPlacementMode="Compact" ValueChanged="Transition_Changed"
+                           AutomationProperties.Name="Transition length in milliseconds" />
+                <TextBlock Text="ms" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+        </Grid>
+
+        <InfoBar x:Name="EngineError" Grid.Row="2" VerticalAlignment="Top" Severity="Error" IsClosable="False"
+                 Title="OmniCast couldn't start its engine" Canvas.ZIndex="2">
+            <InfoBar.ActionButton>
+                <Button Content="Try again" Click="Retry_Click" />
+            </InfoBar.ActionButton>
+        </InfoBar>
+
+        <!-- Previews: each canvas's finished frame, straight from the GPU. -->
+        <Grid x:Name="PreviewRow" Grid.Row="2" ColumnSpacing="16" SizeChanged="PreviewRow_SizeChanged">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="TallColumn" Width="200" />
+            </Grid.ColumnDefinitions>
+
+            <Border Background="Black" CornerRadius="{StaticResource OverlayCornerRadius}">
+                <Grid>
+                    <SwapChainPanel x:Name="WidePanel" AutomationProperties.Name="16 by 9 preview"
+                                    SizeChanged="Panel_SizeChanged" CompositionScaleChanged="Panel_ScaleChanged" />
+                    <Border Style="{StaticResource PreviewLabel}">
+                        <TextBlock x:Name="WideLabel" Text="16:9 · YouTube, Twitch, Kick" Foreground="White" FontSize="12" />
+                    </Border>
+                </Grid>
+            </Border>
+            <Border Grid.Column="1" Background="Black" CornerRadius="{StaticResource OverlayCornerRadius}">
+                <Grid>
+                    <SwapChainPanel x:Name="TallPanel" AutomationProperties.Name="9 by 16 preview"
+                                    SizeChanged="Panel_SizeChanged" CompositionScaleChanged="Panel_ScaleChanged" />
+                    <Border Style="{StaticResource PreviewLabel}">
+                        <TextBlock Text="9:16 · TikTok, Instagram" Foreground="White" FontSize="12" />
+                    </Border>
+                </Grid>
+            </Border>
+
+            <StackPanel x:Name="PreviewOverlay" Grid.ColumnSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                <ProgressRing x:Name="StartingRing" IsActive="True" />
+                <TextBlock x:Name="OverlayText" Text="Starting the engine…" Foreground="White" HorizontalAlignment="Center" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="3" ColumnSpacing="16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="260" />
+                <ColumnDefinition Width="*" MinWidth="260" />
+                <ColumnDefinition Width="280" />
+            </Grid.ColumnDefinitions>
+
+            <!-- The scene on air: its preset. Changes apply live and are saved. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock x:Name="SceneHeader" Text="Scene" Style="{StaticResource CardHeaderStyle}" Margin="0"
+                               TextTrimming="CharacterEllipsis" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="124" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="ScreenKindBox" Header="Screen" HorizontalAlignment="Stretch" SelectionChanged="ScreenKind_SelectionChanged"
+                                  AutomationProperties.Name="What the screen slot captures">
+                            <x:String>Display</x:String>
+                            <x:String>Window</x:String>
+                            <x:String>Game</x:String>
+                            <x:String>Capture card</x:String>
+                        </ComboBox>
+                        <ComboBox x:Name="ScreenItem" Grid.Column="1" Header=" " HorizontalAlignment="Stretch" DisplayMemberPath="Name"
+                                  PlaceholderText="Nothing found" SelectionChanged="ScreenItem_SelectionChanged"
+                                  AutomationProperties.Name="Screen source" />
+                        <Button Grid.Column="2" VerticalAlignment="Bottom" Click="Refresh_Click"
+                                ToolTipService.ToolTip="Refresh the lists" AutomationProperties.Name="Refresh">
+                            <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                        </Button>
+                    </Grid>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="140" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="CameraItem" Header="Camera" HorizontalAlignment="Stretch" DisplayMemberPath="Name"
+                                  SelectionChanged="Scene_Changed" AutomationProperties.Name="Camera" />
+                        <ComboBox x:Name="CornerBox" Grid.Column="1" Header="Corner (16:9)" HorizontalAlignment="Stretch"
+                                  SelectionChanged="Scene_Changed" AutomationProperties.Name="Camera corner on 16:9">
+                            <x:String>Bottom right</x:String>
+                            <x:String>Bottom left</x:String>
+                            <x:String>Top right</x:String>
+                            <x:String>Top left</x:String>
+                        </ComboBox>
+                    </Grid>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="WideLayoutBox" Header="16:9 layout" HorizontalAlignment="Stretch" SelectionChanged="Scene_Changed">
+                            <x:String>Screen + camera</x:String>
+                            <x:String>Screen only</x:String>
+                            <x:String>Camera only</x:String>
+                        </ComboBox>
+                        <ComboBox x:Name="TallLayoutBox" Grid.Column="1" Header="9:16 layout" HorizontalAlignment="Stretch" SelectionChanged="Scene_Changed">
+                            <x:String>Split screen / camera</x:String>
+                            <x:String>Screen only</x:String>
+                            <x:String>Camera only</x:String>
+                        </ComboBox>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Audio -->
+            <Border Grid.Column="1" Style="{StaticResource CardStyle}">
+                <StackPanel x:Name="AudioRows" Spacing="10">
+                    <TextBlock Text="Audio" Style="{StaticResource CardHeaderStyle}" Margin="0" />
+                </StackPanel>
+            </Border>
+
+            <!-- Go live / record -->
+            <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="10">
+                    <Button x:Name="LiveButton" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" Height="44"
+                            Click="Live_Click" ToolTipService.ToolTip="Ctrl+Alt+L">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon x:Name="LiveIcon" Glyph="&#xE93E;" FontSize="16" />
+                            <TextBlock x:Name="LiveText" Text="Go live" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="RecordButton" HorizontalAlignment="Stretch" Height="40" Click="Record_Click" ToolTipService.ToolTip="Ctrl+Alt+R">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon x:Name="RecordIcon" Glyph="&#xE7C8;" FontSize="16" Foreground="{StaticResource LiveBrush}" />
+                            <TextBlock x:Name="RecordText" Text="Start recording" />
+                        </StackPanel>
+                    </Button>
+                    <HyperlinkButton x:Name="DestinationsLink" Click="Destinations_Click" Padding="0" />
+                    <TextBlock x:Name="ActionError" TextWrapping="Wrap" Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                               Style="{StaticResource CaptionTextBlockStyle}" Visibility="Collapsed" />
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Grid>
+</Page>

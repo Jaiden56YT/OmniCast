@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="OmniCast.Pages.DestinationsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24,4,24,24" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <TextBlock Text="Destinations" Style="{StaticResource TitleTextBlockStyle}" />
+            <Button HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" Click="Add_Click"
+                    AutomationProperties.Name="Add destination">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <FontIcon Glyph="&#xE710;" FontSize="14" />
+                    <TextBlock Text="Add destination" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <TextBlock Grid.Row="1" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   Text="Every destination on a canvas shares that canvas's one encode, so adding another platform costs upload bandwidth, not CPU or GPU. Stream keys are kept in Windows Credential Manager." />
+
+        <ScrollViewer Grid.Row="2">
+            <StackPanel>
+                <StackPanel x:Name="List" Spacing="4" />
+                <StackPanel x:Name="Empty" Spacing="8" Margin="0,48,0,0" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xE774;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                    <TextBlock Text="No destinations yet" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+                    <TextBlock Text="Add YouTube, Twitch, Kick, TikTok, Instagram or any RTMP server." HorizontalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <ContentDialog x:Name="Editor" Title="Add destination" PrimaryButtonText="Save" CloseButtonText="Cancel"
+                       DefaultButton="Primary" PrimaryButtonClick="Editor_Save">
+            <StackPanel Spacing="12" MinWidth="420">
+                <ComboBox x:Name="PlatformBox" Header="Platform" HorizontalAlignment="Stretch" SelectionChanged="Platform_Changed">
+                    <x:String>YouTube</x:String>
+                    <x:String>Twitch</x:String>
+                    <x:String>Kick</x:String>
+                    <x:String>TikTok</x:String>
+                    <x:String>Instagram</x:String>
+                    <x:String>Custom RTMP server</x:String>
+                </ComboBox>
+                <TextBox x:Name="NameBox" Header="Name" PlaceholderText="Shown in OmniCast" />
+                <TextBox x:Name="ServerBox" Header="Server" PlaceholderText="rtmp:// or rtmps://" />
+                <PasswordBox x:Name="KeyBox" Header="Stream key" PlaceholderText="Paste it from the platform" />
+                <TextBlock x:Name="HelpText" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <RadioButtons x:Name="CanvasBox" Header="Canvas" MaxColumns="2">
+                    <x:String>16:9 (landscape)</x:String>
+                    <x:String>9:16 (portrait)</x:String>
+                </RadioButtons>
+                <TextBlock x:Name="EditorError" Foreground="{ThemeResource SystemFillColorCriticalBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+            </StackPanel>
+        </ContentDialog>
+    </Grid>
+</Page>
