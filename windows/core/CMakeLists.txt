@@ -38,6 +38,7 @@ add_library(OmniCore SHARED
   src/preview.cpp
   src/outputs.cpp
   src/scenes.cpp
+  src/audio_out.cpp
 )
 target_include_directories(OmniCore PRIVATE include "${OBS_INCLUDE}")
 target_compile_definitions(OmniCore PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)

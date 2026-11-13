@@ -96,6 +96,9 @@ public sealed class AppSettings
     // Audio devices
     public string MicDevice { get; set; } = "default";
     public string DesktopDevice { get; set; } = "default";
+    // Virtual-cable device ids for the Discord outputs ("" = off).
+    public string DiscordVoiceDevice { get; set; } = "";
+    public string DiscordStreamAudioDevice { get; set; } = "";
     public ChannelInfo[] Channels { get; set; } = { new(), new(), new() };
 
     // App

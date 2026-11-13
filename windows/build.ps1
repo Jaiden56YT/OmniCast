@@ -3,11 +3,13 @@
 #   .\windows\build.ps1            Release build (first run also gets libobs)
 #   .\windows\build.ps1 -Debug     Debug build
 #   .\windows\build.ps1 -Zip       also make windows\build\OmniCast-Windows-x64.zip
+#   .\windows\build.ps1 -Installer also make windows\build\OmniCast-Setup-x64.exe
+#                                  (needs Inno Setup 6: winget install JRSoftware.InnoSetup)
 #
 # Needs Visual Studio 2022 (or its Build Tools) with "Desktop development with
 # C++", and the .NET 8 SDK. See windows\README.md.
 
-param([switch]$Debug, [switch]$Zip)
+param([switch]$Debug, [switch]$Zip, [switch]$Installer)
 $ErrorActionPreference = 'Stop'
 $Root   = $PSScriptRoot
 $Config = if ($Debug) { 'Debug' } else { 'Release' }
@@ -60,6 +62,17 @@ Get-ChildItem (Join-Path $Out 'obs\bin\64bit') -Filter '*-test.exe' | Copy-Item 
 Copy-Item (Join-Path $Root '..\LICENSE') (Join-Path $Out 'LICENSE.txt')
 $mb = [math]::Round(((Get-ChildItem $Out -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
 Write-Host "  $Out ($mb MB)"
+
+if ($Installer) {
+    Step 'Installer'
+    $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+              "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $iscc) { throw 'Inno Setup 6 is not installed: winget install JRSoftware.InnoSetup' }
+    $version = ([xml](Get-Content (Join-Path $Root 'app\OmniCast.csproj'))).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    & $iscc /Q "/DAppVersion=$version" (Join-Path $Root 'installer\OmniCast.iss') | Out-Host
+    if ($LASTEXITCODE) { throw 'The installer failed to build' }
+    Write-Host "  $(Join-Path $Root 'build\OmniCast-Setup-x64.exe')"
+}
 
 if ($Zip) {
     $zipPath = Join-Path $Root 'build\OmniCast-Windows-x64.zip'

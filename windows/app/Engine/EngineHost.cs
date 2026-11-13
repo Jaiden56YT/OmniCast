@@ -175,7 +175,32 @@ public sealed class EngineHost : INotifyPropertyChanged
         Native.oc_scene_activate(ActiveScene.Id, (int)TransitionKind.Cut, 0);
         for (int ch = 0; ch < 3; ch++)
             ApplyChannel(ch);
+        // Saved Discord outputs; a cable that's gone (uninstalled) just stays off.
+        Native.oc_discord_output_set(Native.DiscordVoice, s.DiscordVoiceDevice);
+        Native.oc_discord_output_set(Native.DiscordStreamAudio, s.DiscordStreamAudioDevice);
     }
+
+    // Plays a mix into a virtual cable ("" = off). Returns whether it's playing.
+    // One cable can't carry both: giving it to one output takes it from the other.
+    public bool SetDiscordOutput(int output, string deviceId)
+    {
+        if (output == Native.DiscordVoice)
+        {
+            Settings.DiscordVoiceDevice = deviceId;
+            if (deviceId.Length > 0 && Settings.DiscordStreamAudioDevice == deviceId)
+                Settings.DiscordStreamAudioDevice = "";
+        }
+        else
+        {
+            Settings.DiscordStreamAudioDevice = deviceId;
+            if (deviceId.Length > 0 && Settings.DiscordVoiceDevice == deviceId)
+                Settings.DiscordVoiceDevice = "";
+        }
+        Settings.Save();
+        return IsRunning && Native.oc_discord_output_set(output, deviceId) != 0;
+    }
+
+    public bool DiscordOutputRunning(int output) => IsRunning && Native.oc_discord_output_running(output) != 0;
 
     private static void PushScene(SceneInfo s) =>
         Native.SceneSet(s.Id, (int)s.ScreenKind, s.ScreenId, s.CameraId, (int)s.WideLayout, (int)s.CameraCorner, (int)s.TallLayout);

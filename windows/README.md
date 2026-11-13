@@ -53,6 +53,18 @@ with `powershell -ExecutionPolicy Bypass -File .\windows\build.ps1`.
 The finished app is the folder `windows\build\OmniCast`. Copy it anywhere, or
 add `-Zip` to the build for `windows\build\OmniCast-Windows-x64.zip`.
 
+### Installer
+
+`.\windows\build.ps1 -Installer` also makes
+`windows\build\OmniCast-Setup-x64.exe` (about 40 MB), with
+[Inno Setup 6](https://jrsoftware.org/isinfo.php)
+(`winget install JRSoftware.InnoSetup`). It installs to Program Files (or
+"for me only", without admin rights), adds Start menu and optional desktop
+shortcuts, and uninstalls cleanly from Settings › Apps. If VB-CABLE isn't
+installed, its last page offers to open VB-Audio's page for it (see Discord
+audio). Settings in `%LOCALAPPDATA%\OmniCast` and stream keys in Credential
+Manager are kept when you uninstall.
+
 ## First run
 
 1. **Screen.** The main display shows in both previews straight away, in
@@ -171,6 +183,31 @@ USB, and other apps can use them.
 - **One OmniCast at a time:** opening it again brings the window to the front.
 - Automatic reconnects (up to 20 tries) when a connection drops.
 
+## Discord audio
+
+Settings › Discord sends your **mic into Discord** through OmniCast: Discord
+hears it with OmniCast's level, mute and scene mute. It plays into a virtual
+audio cable, and Discord uses the cable's other end as its microphone:
+
+1. Install **VB-CABLE**, a free virtual audio cable (donationware) from
+   VB-Audio: click **Get VB-CABLE** in Settings › Discord (or tick it on the
+   installer's last page), download the VB-CABLE Driver Pack, unzip it,
+   right-click `VBCABLE_Setup_x64.exe` › **Run as administrator** › **Install
+   Driver**, and restart the PC. OmniCast finds it on its own.
+2. In OmniCast, set **Voice** to **CABLE Input**.
+3. In Discord, set Settings › Voice & Video › **Input Device** to **CABLE
+   Output**.
+
+VB-CABLE's licence doesn't allow other apps' installers to install it without
+VB-Audio's agreement, so OmniCast's installer only points you to it for now.
+
+**Stream audio without your mic** plays desktop audio and the capture card
+into a second cable, for apps that take a microphone (a second Discord
+account in a watch-party channel, say). It needs a second cable: VB-CABLE A+B
+or Voicemeeter. Discord's own Go Live doesn't need it: on Windows, Go Live
+takes sound from the window you share. Only virtual cables are offered (not
+speakers), and one cable can't carry both outputs.
+
 ## Coming next
 
 These OmniCast for Mac features aren't in the Windows app yet:
@@ -180,9 +217,10 @@ These OmniCast for Mac features aren't in the Windows app yet:
 - Overlays: merged Twitch/Kick/YouTube chat, Discord call overlay, now playing
 - Spotify / [untitled] music switch
 - Setting stream titles and games on all platforms at once
-- Discord voice and Go Live audio outputs (via VB-Audio Virtual Cable)
+- Mic plugins on the Discord voice output, and Discord's call overlay
 - Virtual camera
-- An installer (today it's a folder or zip)
+- Installing VB-CABLE automatically (waiting on VB-Audio's permission; see
+  Discord audio above)
 
 # How it's built
 
@@ -253,12 +291,13 @@ The script notices the list changed and extracts again.
 
 - `windows\core`: **OmniCore**, a C++ DLL over libobs with a flat C API
   (`include\omnicore.h`): canvases, scenes and transitions, encoder choice, previews,
-  streaming, recording, audio meters.
+  streaming, recording, audio meters, the Discord outputs (`src\audio_out.cpp`).
 - `windows\app`: the **WinUI 3** app in C#, calling OmniCore through
   P/Invoke (`Engine\Native.cs`). `Engine\EngineHost.cs` holds the app's state;
   `Pages\` are Studio, Destinations and Settings; `Services\` has settings,
   Credential Manager, the tray icon and hotkeys, notifications, start with
   Windows.
+- `windows\installer\OmniCast.iss`: the Inno Setup installer.
 - `windows\scripts`: getting libobs, drawing the icons.
 - `windows\build.ps1`: the one build command.
 

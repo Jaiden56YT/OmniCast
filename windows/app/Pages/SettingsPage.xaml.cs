@@ -60,6 +60,7 @@ public sealed partial class SettingsPage : Page
 
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         VersionText.Text = $"OmniCast for Windows {v?.Major}.{v?.Minor}.{v?.Build}";
+        LoadDiscord();
         _loading = false;
         UpdateVideoState();
     }
@@ -188,6 +189,53 @@ public sealed partial class SettingsPage : Page
         }
         s.Save();
     }
+
+    // ---------------------------------------------------------------- discord
+
+    private const string VbCablePage = "https://vb-audio.com/Cable/";
+
+    // Fills both pickers with the virtual cables on this PC (plus "Off"), or
+    // shows how to get VB-CABLE when there are none.
+    private void LoadDiscord()
+    {
+        bool was = _loading;
+        _loading = true;
+        var cables = _host.List("loopback_outputs");
+        CableMissing.IsOpen = _host.IsRunning && cables.Count == 0;
+        foreach (var (box, saved) in new[] { (VoiceBox, _host.Settings.DiscordVoiceDevice), (StreamAudioBox, _host.Settings.DiscordStreamAudioDevice) })
+        {
+            var items = new System.Collections.Generic.List<DeviceItem> { new("", "Off") };
+            items.AddRange(cables);
+            box.ItemsSource = items;
+            box.SelectedItem = items.FirstOrDefault(i => i.Id == saved) ?? items[0];
+            box.IsEnabled = cables.Count > 0;
+        }
+        _loading = was;
+        UpdateDiscordStatus();
+    }
+
+    private void UpdateDiscordStatus()
+    {
+        static string Status(bool on, bool running) => !on ? "" : running ? "● Playing" : "Couldn't open this device";
+        VoiceStatus.Text = Status(_host.Settings.DiscordVoiceDevice.Length > 0, _host.DiscordOutputRunning(Native.DiscordVoice));
+        StreamAudioStatus.Text = Status(_host.Settings.DiscordStreamAudioDevice.Length > 0, _host.DiscordOutputRunning(Native.DiscordStreamAudio));
+        VoiceStatus.Visibility = VoiceStatus.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        StreamAudioStatus.Visibility = StreamAudioStatus.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void Discord_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_loading || !_host.IsRunning) return;
+        int output = ReferenceEquals(sender, VoiceBox) ? Native.DiscordVoice : Native.DiscordStreamAudio;
+        string id = ((sender as ComboBox)?.SelectedItem as DeviceItem)?.Id ?? "";
+        _host.SetDiscordOutput(output, id);
+        LoadDiscord(); // the other picker may have given up this cable
+    }
+
+    private void GetCable_Click(object sender, RoutedEventArgs e) =>
+        Process.Start(new ProcessStartInfo(VbCablePage) { UseShellExecute = true });
+
+    private void CheckCable_Click(object sender, RoutedEventArgs e) => LoadDiscord();
 
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
     {

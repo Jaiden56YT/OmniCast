@@ -101,6 +101,11 @@ public static class Native
         }
     }
 
+    // Discord outputs (into a virtual cable such as VB-CABLE)
+    public const int DiscordVoice = 0, DiscordStreamAudio = 1;
+    [DllImport(Dll)] public static extern int oc_discord_output_set(int output, [MarshalAs(UnmanagedType.LPUTF8Str)] string deviceId);
+    [DllImport(Dll)] public static extern int oc_discord_output_running(int output);
+
     // Audio devices
     [DllImport(Dll)] public static extern void oc_mic_set_device([MarshalAs(UnmanagedType.LPUTF8Str)] string id);
     [DllImport(Dll)] public static extern void oc_desktop_set_device([MarshalAs(UnmanagedType.LPUTF8Str)] string id);

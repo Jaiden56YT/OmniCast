@@ -130,6 +130,42 @@
                 <ComboBox x:Name="DesktopBox" Grid.Column="1" MinWidth="280" DisplayMemberPath="Name" SelectionChanged="Audio_Changed" />
             </Grid>
 
+            <!-- Discord -->
+            <TextBlock Text="Discord" Style="{StaticResource SectionHeaderStyle}" />
+            <!-- Shown until a virtual cable is installed: how to get VB-CABLE. -->
+            <InfoBar x:Name="CableMissing" Severity="Informational" IsClosable="False" IsOpen="False"
+                     Title="Discord audio needs VB-CABLE"
+                     Message="VB-CABLE is a free virtual audio cable from VB-Audio. On their page, download the VB-CABLE Driver Pack, unzip it, right-click VBCABLE_Setup_x64.exe › Run as administrator › Install Driver, then restart your PC. OmniCast finds it on its own.">
+                <InfoBar.Content>
+                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,12">
+                        <Button Content="Get VB-CABLE" Style="{StaticResource AccentButtonStyle}" Click="GetCable_Click" />
+                        <Button Content="Check again" Click="CheckCable_Click" />
+                    </StackPanel>
+                </InfoBar.Content>
+            </InfoBar>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Voice: your mic into Discord" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}"
+                               Text="Discord hears your mic through OmniCast, with its level, mute and scene mute. In Discord: Settings › Voice &amp; Video › Input Device › CABLE Output." />
+                    <TextBlock x:Name="VoiceStatus" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="VoiceBox" Grid.Column="1" MinWidth="240" VerticalAlignment="Center" DisplayMemberPath="Name"
+                          SelectionChanged="Discord_Changed" AutomationProperties.Name="Discord voice output" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Stream audio without your mic" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}"
+                               Text="Desktop audio and the capture card, for an app that takes a microphone (e.g. a second Discord account in a watch-party channel). Discord's own Go Live doesn't need it: on Windows it takes sound from the window you share. Needs its own cable (VB-CABLE A+B or Voicemeeter)." />
+                    <TextBlock x:Name="StreamAudioStatus" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="StreamAudioBox" Grid.Column="1" MinWidth="240" VerticalAlignment="Center" DisplayMemberPath="Name"
+                          SelectionChanged="Discord_Changed" AutomationProperties.Name="Stream audio output" />
+            </Grid>
+
             <!-- App -->
             <TextBlock Text="App" Style="{StaticResource SectionHeaderStyle}" />
             <Grid Style="{StaticResource RowStyle}">

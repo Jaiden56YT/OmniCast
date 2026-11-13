@@ -78,7 +78,8 @@ OC_API void oc_set_busy(int32_t busy);
 // ---------------------------------------------------------------------------
 // Lists, as a JSON array of {"id":..., "name":...}. what is one of:
 //   "monitors", "windows", "games" (windows a game capture can hook),
-//   "video_devices" (cameras and capture cards), "audio_inputs", "audio_outputs"
+//   "video_devices" (cameras and capture cards), "audio_inputs", "audio_outputs",
+//   "loopback_outputs" (virtual cables for the Discord outputs)
 OC_API char *oc_list(const char *what);
 OC_API void oc_free(void *p);
 
@@ -162,6 +163,23 @@ OC_API void oc_audio_set(int32_t channel, float gain, int32_t muted);
 OC_API void oc_audio_levels(int32_t channel, float *left_db, float *right_db);
 // 1 when the channel has a source right now (the capture card only does while picked).
 OC_API int32_t oc_audio_present(int32_t channel);
+
+// ---------------------------------------------------------------------------
+// Discord outputs
+//
+// Plays a mix into a virtual audio cable (VB-CABLE or Voicemeeter) so Discord
+// can pick the cable's other end as its microphone. Devices come from
+// oc_list("loopback_outputs"); only virtual cables are listed.
+
+enum oc_discord_output {
+	OC_DISCORD_VOICE = 0,   // the mic, after its level and mute
+	OC_DISCORD_GO_LIVE = 1, // desktop audio and the capture card, without the mic
+};
+
+// device_id "" turns the output off. One device can't feed both outputs: giving
+// it to one takes it from the other. Returns 1 when the device is playing.
+OC_API int32_t oc_discord_output_set(int32_t output, const char *device_id);
+OC_API int32_t oc_discord_output_running(int32_t output);
 
 // ---------------------------------------------------------------------------
 // Preview

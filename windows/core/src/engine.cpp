@@ -485,6 +485,7 @@ static void probes_release();
 
 OC_API void oc_shutdown(void)
 {
+	discord_outputs_stop();
 	outputs_stop_all_and_wait();
 	probes_release();
 	preview_detach_all();
@@ -673,6 +674,8 @@ OC_API char *oc_list(const char *what)
 		} else if (!strcmp(what, "audio_outputs")) {
 			props = obs_get_source_properties("wasapi_output_capture");
 			prop = "device_id";
+		} else if (!strcmp(what, "loopback_outputs")) {
+			list_loopback_outputs(out, first);
 		}
 		append_list(out, props, prop, first);
 		obs_properties_destroy(props);

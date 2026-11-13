@@ -49,6 +49,10 @@ std::string primary_monitor_id();
 void scenes_init();    // transitions on both canvases' output channels
 void scenes_release(); // every scene, shared source and transition
 
+// audio_out.cpp
+void discord_outputs_stop();
+void list_loopback_outputs(std::string &json, bool &first);
+
 // audio.cpp
 void audio_attach(int channel, obs_source_t *source);
 void audio_detach_all();
