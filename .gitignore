@@ -6,3 +6,11 @@ vendor/obs-runtime.tmp/
 vendor/include/simde/
 .DS_Store
 vendor/downloads/
+
+# OmniCast for Windows
+windows/build/
+windows/vendor/
+windows/app/bin/
+windows/app/obj/
+*.user
+.vs/
