@@ -181,6 +181,7 @@ struct SourcesPanel: View {
                 YouSourceRow()
                 CallSourceRow()
                 ChatSourceRow()
+                AlertSourceRow()
                 SpotifySourceRow()
                 Spacer(minLength: 8)
                 Theme.hairline.frame(height: 1)

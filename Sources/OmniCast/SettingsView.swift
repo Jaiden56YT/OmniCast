@@ -10,6 +10,8 @@ struct SettingsView: View {
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle.badge.checkmark") }
             ChatSettingsView()
                 .tabItem { Label("Chat", systemImage: "bubble.left.and.text.bubble.right") }
+            AlertSettingsView()
+                .tabItem { Label("Alerts", systemImage: "bell.badge") }
             DiscordSettingsView()
                 .tabItem { Label("Discord", systemImage: "person.2.wave.2") }
             VideoSettingsView()

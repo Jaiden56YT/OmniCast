@@ -29,9 +29,14 @@ final class ChatOverlay {
     var size = Size(rawValue: UserDefaults.standard.string(forKey: "chat.size") ?? "") ?? .medium {
         didSet { UserDefaults.standard.set(size.rawValue, forKey: "chat.size"); redraw() }
     }
-    /// Seconds a line stays up; 0 keeps the latest lines up for good.
-    var hideAfter = UserDefaults.standard.object(forKey: "chat.hideAfter") as? Double ?? 0 {
+    /// Seconds a line stays up before it fades out; 0 keeps the latest lines up for good.
+    var hideAfter = UserDefaults.standard.object(forKey: "chat.hideAfter") as? Double ?? 300 {
         didSet { UserDefaults.standard.set(hideAfter, forKey: "chat.hideAfter"); redraw() }
+    }
+    /// Seconds without a new message before the whole chat fades out (it fades
+    /// back in with the next message); 0 never fades it.
+    var fadeWhenQuiet = UserDefaults.standard.object(forKey: "chat.fadeWhenQuiet") as? Double ?? 300 {
+        didSet { UserDefaults.standard.set(fadeWhenQuiet, forKey: "chat.fadeWhenQuiet"); updateQuiet() }
     }
 
     private(set) var boxes: [Canvas: CallOverlay.Box] = {
@@ -77,6 +82,14 @@ final class ChatOverlay {
     private var emotes: [URL: NSImage] = [:]
     private var loading: Set<URL> = []
     private var expiryTimer: Timer?
+    /// Lines on screen at the last draw, to redraw when one expires.
+    private var drawnLines = 0
+    /// The whole chat's fade (quiet chat), eased toward `layerTarget`.
+    private var layerOpacity: Float = 1
+    private var layerTarget: Float = 1
+    private var fadeTimer: Timer?
+    /// How long a single line takes to fade out.
+    private static let lineFade: TimeInterval = 1.5
 
     private var folder: URL {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -88,13 +101,13 @@ final class ChatOverlay {
     private static func key(_ canvas: Canvas) -> String { "chat-\(canvas.rawValue)" }
 
     func start() {
-        ChatHub.shared.onChange = { [weak self] in self?.redraw() }
-        // Lines that expire need a redraw even when nobody's typing.
-        expiryTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                let overlay = ChatOverlay.shared
-                if overlay.hideAfter > 0, !ChatHub.shared.messages.isEmpty { overlay.redraw() }
-            }
+        ChatHub.shared.onChange = { [weak self] in
+            self?.updateQuiet()
+            self?.redraw()
+        }
+        // Lines that fade or expire need a redraw even when nobody's typing.
+        expiryTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
+            MainActor.assumeIsolated { ChatOverlay.shared.checkExpiry() }
         }
         ChatHub.shared.start()
         redraw()
@@ -113,6 +126,51 @@ final class ChatOverlay {
         }
     }
 
+    /// Lines still up, each with its opacity (below 1 while fading out).
+    private func visibleLines(at now: Date = Date()) -> [(ChatMessage, CGFloat)] {
+        ChatHub.shared.messages.compactMap { m in
+            guard hideAfter > 0 else { return (m, 1) }
+            let left = hideAfter - now.timeIntervalSince(m.received)
+            return left > 0 ? (m, CGFloat(min(1, left / Self.lineFade))) : nil
+        }
+    }
+
+    private func checkExpiry() {
+        updateQuiet()
+        guard hideAfter > 0 else { return }
+        let lines = visibleLines()
+        if lines.count != drawnLines || lines.contains(where: { $0.1 < 1 }) { redraw() }
+    }
+
+    /// Fades the whole chat out once nobody has written for `fadeWhenQuiet`, and back in on a new message.
+    private func updateQuiet() {
+        let quiet = fadeWhenQuiet > 0
+            && Date().timeIntervalSince(ChatHub.shared.messages.last?.received ?? .distantPast) >= fadeWhenQuiet
+        let target: Float = quiet ? 0 : 1
+        guard target != layerTarget || (fadeTimer == nil && layerOpacity != target) else { return }
+        layerTarget = target
+        guard fadeTimer == nil else { return }
+        fadeTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { _ in
+            MainActor.assumeIsolated { ChatOverlay.shared.fadeStep() }
+        }
+    }
+
+    private func fadeStep() {
+        // About a second out, half a second back in.
+        let step: Float = layerTarget > layerOpacity ? 1.0 / 15 : 1.0 / 30
+        layerOpacity = layerTarget > layerOpacity ? min(layerTarget, layerOpacity + step) : max(layerTarget, layerOpacity - step)
+        let eased = layerOpacity * layerOpacity * (3 - 2 * layerOpacity)
+        for canvas in Canvas.allCases where shown(canvas) && drawnLines > 0 {
+            omni_layer_set_opacity(Self.key(canvas), eased)
+        }
+        if layerOpacity == layerTarget {
+            fadeTimer?.invalidate()
+            fadeTimer = nil
+        }
+    }
+
+    private var easedLayerOpacity: Float { layerOpacity * layerOpacity * (3 - 2 * layerOpacity) }
+
     private func shown(_ canvas: Canvas) -> Bool { visible && (canvas == .horizontal || showOnVertical) }
 
     private func place(_ canvas: Canvas) {
@@ -126,8 +184,8 @@ final class ChatOverlay {
 
     private func draw(_ canvas: Canvas) {
         let key = Self.key(canvas)
-        let now = Date()
-        let lines = ChatHub.shared.messages.filter { hideAfter <= 0 || now.timeIntervalSince($0.received) < hideAfter }
+        let lines = visibleLines()
+        if canvas == .horizontal { drawnLines = lines.count }
         guard shown(canvas), !lines.isEmpty, Engine.shared.running else {
             omni_layer_set_opacity(key, 0)
             return
@@ -139,7 +197,7 @@ final class ChatOverlay {
         else { return }
         omni_layer_set_image(key, url.path)
         place(canvas)
-        omni_layer_set_opacity(key, 1)
+        omni_layer_set_opacity(key, easedLayerOpacity)
     }
 
     // MARK: Drawing
@@ -147,7 +205,7 @@ final class ChatOverlay {
     /// Bright palette picks for names without their own colour.
     private static let palette: [NSColor] = ["#A78BFA", "#D46BFF", "#FF8FD0", "#6E8BFF", "#4ED1A1", "#FF7A59"].map(color)
 
-    private func render(_ lines: [ChatMessage], size: CGSize) -> NSBitmapImageRep? {
+    private func render(_ lines: [(ChatMessage, CGFloat)], size: CGSize) -> NSBitmapImageRep? {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
                                          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                                          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
@@ -158,15 +216,21 @@ final class ChatOverlay {
         let width = size.width - 12
         let gap = self.size.points * 0.35
         var y: CGFloat = 6 // from the bottom up, newest first
-        for message in lines.reversed() {
+        let cg = NSGraphicsContext.current?.cgContext
+        for (message, alpha) in lines.reversed() {
             let text = attributed(message)
             let height = ceil(text.boundingRect(with: CGSize(width: width, height: 10_000),
                                                 options: [.usesLineFragmentOrigin, .usesFontLeading]).height)
             guard y + height <= size.height else { break }
             let rect = CGRect(x: 6, y: y, width: width, height: height + 4)
+            // A fading line is drawn as one layer, so the outline doesn't show through the fill.
+            cg?.setAlpha(alpha)
+            cg?.beginTransparencyLayer(auxiliaryInfo: nil)
             // Outline pass, then fill: a thick black edge outside the letters, like the art.
             outlined(text).draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading])
             text.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            cg?.endTransparencyLayer()
+            cg?.setAlpha(1)
             y += height + gap
         }
         return rep

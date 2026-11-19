@@ -169,6 +169,7 @@ final class Engine {
         CallOverlay.shared.start()
         SpotifyOverlay.shared.start()
         ChatOverlay.shared.start()
+        AlertOverlay.shared.start()
         MusicSync.shared.start()
     }
 

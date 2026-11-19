@@ -78,11 +78,27 @@ struct ChatSettingsView: View {
                     Text("Medium").tag(ChatOverlay.Size.medium)
                     Text("Large").tag(ChatOverlay.Size.large)
                 }
-                Picker("Hide lines after", selection: $overlay.hideAfter) {
+                Picker("Fade each message after", selection: $overlay.hideAfter) {
                     Text("Never").tag(0.0)
                     Text("30 seconds").tag(30.0)
                     Text("1 minute").tag(60.0)
                     Text("2 minutes").tag(120.0)
+                    Text("5 minutes").tag(300.0)
+                    Text("10 minutes").tag(600.0)
+                }
+                Picker("Fade the chat when quiet for", selection: $overlay.fadeWhenQuiet) {
+                    Text("Never").tag(0.0)
+                    Text("1 minute").tag(60.0)
+                    Text("2 minutes").tag(120.0)
+                    Text("5 minutes").tag(300.0)
+                    Text("10 minutes").tag(600.0)
+                    Text("15 minutes").tag(900.0)
+                }
+                HStack {
+                    Button("Show test messages") { hub.addTestMessages() }
+                        .disabled(!Engine.shared.running)
+                    Text("The whole chat fades back in with the next message.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Also show on 9:16", isOn: $overlay.showOnVertical)
                 Text("Move and resize the chat with Arrange on the preview.")

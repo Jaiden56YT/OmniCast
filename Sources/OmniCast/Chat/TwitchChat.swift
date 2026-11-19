@@ -5,6 +5,7 @@ import Foundation
 final class TwitchChat: ChatSource {
     var onMessage: ((ChatMessage) -> Void)?
     var onStatus: ((ChatStatus) -> Void)?
+    var onAlert: ((StreamAlert) -> Void)?
 
     private let channel: String
     private var socket: URLSessionWebSocketTask?
@@ -99,10 +100,65 @@ final class TwitchChat: ChatSource {
                 color: tags["color"].flatMap { $0.isEmpty ? nil : $0 },
                 badges: Self.badges(tags["badges"] ?? ""),
                 parts: Self.parts(text, emotes: tags["emotes"] ?? "")))
+            if let bits = tags["bits"].flatMap(Int.init), bits > 0, !Self.fromSharedChat(tags) {
+                // The cheermotes ("Cheer100") are the bits themselves; the rest is their message.
+                let words = text.split(separator: " ").filter { $0.range(of: #"^[A-Za-z]+\d+$"#, options: .regularExpression) == nil }
+                onAlert?(StreamAlert(platform: .twitch, kind: .money, name: name, action: "cheered",
+                                     highlight: bits == 1 ? "1 bit" : "\(bits) bits",
+                                     message: words.joined(separator: " ")))
+            }
+        case "USERNOTICE":
+            var text = fields.count == 4 ? String(fields[3]) : ""
+            if text.hasPrefix(":") { text.removeFirst() }
+            if let alert = Self.alert(tags, message: text) { onAlert?(alert) }
         case "CLEARCHAT", "CLEARMSG":
             break // moderation; the overlay simply lets old lines scroll away
         default:
             break
+        }
+    }
+
+    /// In a shared chat session, events from the other channels arrive too.
+    private static func fromSharedChat(_ tags: [String: String]) -> Bool {
+        guard let source = tags["source-room-id"], !source.isEmpty else { return false }
+        return source != tags["room-id"]
+    }
+
+    /// Subs, gift subs and raids: USERNOTICE lines, told apart by msg-id.
+    private static func alert(_ tags: [String: String], message: String) -> StreamAlert? {
+        guard !fromSharedChat(tags) else { return nil }
+        let name = tags["display-name"].flatMap { $0.isEmpty ? nil : $0 } ?? tags["login"] ?? "Someone"
+        func param(_ key: String) -> String? { tags["msg-param-\(key)"].flatMap { $0.isEmpty ? nil : $0 } }
+        let tier: String? = switch param("sub-plan") {
+        case "Prime": "with Prime"
+        case "2000": "at Tier 2"
+        case "3000": "at Tier 3"
+        default: nil
+        }
+        let note = message.isEmpty ? nil : message
+        switch tags["msg-id"] {
+        case "sub":
+            return StreamAlert(platform: .twitch, kind: .subscription, name: name, action: "just subscribed",
+                               highlight: tier, message: note)
+        case "resub":
+            let months = Int(param("cumulative-months") ?? "") ?? 0
+            return StreamAlert(platform: .twitch, kind: .subscription, name: name, action: "resubscribed for",
+                               highlight: months > 0 ? "\(months) months" : nil, message: note)
+        case "subgift", "anonsubgift":
+            // Part of a "gifting 5 subs" bundle, which gets one alert of its own.
+            guard param("community-gift-id") == nil else { return nil }
+            return StreamAlert(platform: .twitch, kind: .gift, name: name, action: "gifted a sub to",
+                               highlight: param("recipient-display-name") ?? param("recipient-user-name") ?? "someone")
+        case "submysterygift", "anonsubmysterygift":
+            let count = Int(param("mass-gift-count") ?? "") ?? 1
+            return StreamAlert(platform: .twitch, kind: .gift, name: name, action: "gifted",
+                               highlight: count == 1 ? "1 sub" : "\(count) subs")
+        case "raid":
+            let viewers = Int(param("viewerCount") ?? "") ?? 0
+            return StreamAlert(platform: .twitch, kind: .raid, name: param("displayName") ?? name, action: "raided with",
+                               highlight: viewers == 1 ? "1 viewer" : "\(viewers) viewers")
+        default:
+            return nil
         }
     }
 

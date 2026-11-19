@@ -3,7 +3,7 @@
 A streaming and recording app made for Mac. One app sends a **16:9** canvas to
 YouTube, Twitch and Kick and a **9:16** canvas to TikTok and Instagram at the same
 time, records either or both, and replaces the usual pile of streaming tools: an
-audio mixer with per-app channels, merged chat, a Discord call overlay, a
+audio mixer with per-app channels, merged chat, stream alerts, a Discord call overlay, a
 now-playing card, a virtual camera, and Discord audio routing.
 
 It's built on libobs, the engine inside OBS Studio, with a native SwiftUI app on
@@ -122,9 +122,39 @@ YouTube, Twitch and Kick chat in one overlay, read only (nothing is ever posted)
 
 Lines are drawn with heavy rounded type and a thick black outline, platform icons, role badges (crown for you, wrench for mods, diamond for
 VIPs, star for members), Twitch/Kick name colours and palette colours for YouTube,
-inline emotes. Channels, text size and how long lines stay up are in
-Settings → Chat; move and resize the box with Arrange. Sources → Chat → ⋯ has
-"Add test messages" for setting it up offline.
+inline emotes. Channels and text size are in Settings → Chat; move and resize
+the box with Arrange. Sources → Chat → ⋯ (or Settings → Chat → Show test
+messages) adds test messages for setting it up offline.
+
+**Fading.** Each message fades out once it has been on screen for 5 minutes, and
+the whole chat fades out after 5 minutes with no new messages, then fades back
+in with the next one. Both times are set in Settings → Chat (30 seconds to 15
+minutes, or Never).
+
+## Stream alerts
+
+Follows, subs, tips and raids pop up on both canvases as a short card ("deku_vt
+cheered 500 bits"), one at a time from a queue: each slides in, stays 5 seconds
+(3 to 12 in Settings) and fades out. Nothing is ever posted to any platform.
+
+| Platform | Alerts | Comes from |
+|---|---|---|
+| Twitch | subs, resubs, gift subs (one alert per bundle), bits, raids | the chat connection |
+| Twitch | follows | EventSub, with your Twitch sign-in (Settings → Accounts) |
+| YouTube | Super Chats, Super Stickers, new members, member milestones, gifted memberships, YouTube gifts | the chat feed |
+| YouTube | new subscribers | the Data API with your YouTube sign-in, checked once a minute while you're live (1 quota unit per check); only people whose subscriptions are public |
+| Kick | subs, resubs, gifted subs, Kicks, hosts | the chat feed |
+
+Not available: **Kick follows** (Kick only sends them to apps with a public
+webhook URL, which a desktop app doesn't have) and third-party tips
+(Streamlabs/StreamElements aren't connected). Twitch accounts signed in before
+alerts existed need to sign in again once to allow follows (the
+`moderator:read:followers` scope); Settings → Alerts says so if needed.
+
+Turn alerts on or off with the bell in Sources → Alerts or in Settings → Alerts,
+where each kind (follows, subs, gifts, bits/tips, raids) can be switched off on
+its own, and each source's status is shown. **Show a test alert** (there or in
+Sources → Alerts → ⋯) plays a sample; move and resize the card with Arrange.
 
 ## Muze follows the music
 

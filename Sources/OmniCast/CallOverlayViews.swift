@@ -68,6 +68,7 @@ struct CallArrangeLayer: View {
                     .onTapGesture { overlay.selected = nil }
                 CameraArrangeBox(canvas: .horizontal, scale: scale)
                 ChatArrangeBox(canvas: .horizontal, scale: scale)
+                AlertArrangeBox(canvas: .horizontal, scale: scale)
                 ForEach(overlay.shown) { member in
                     box(member, scale: scale)
                 }
@@ -338,7 +339,7 @@ struct YouSourceRow: View {
     }
 }
 
-/// The 9:16 preview while arranging: only the camera moves there.
+/// The 9:16 preview while arranging: the camera, chat and alerts move there.
 struct VerticalArrangeLayer: View {
     var body: some View {
         GeometryReader { geo in
@@ -346,6 +347,7 @@ struct VerticalArrangeLayer: View {
                 Color.black.opacity(0.001).onTapGesture { CallOverlay.shared.selected = nil }
                 CameraArrangeBox(canvas: .vertical, scale: geo.size.width / 1080)
                 ChatArrangeBox(canvas: .vertical, scale: geo.size.width / 1080)
+                AlertArrangeBox(canvas: .vertical, scale: geo.size.width / 1080)
             }
         }
     }

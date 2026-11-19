@@ -7,6 +7,7 @@ import Foundation
 final class YouTubeChat: ChatSource {
     var onMessage: ((ChatMessage) -> Void)?
     var onStatus: ((ChatStatus) -> Void)?
+    var onAlert: ((StreamAlert) -> Void)?
 
     private let handle: String
     private var running = false
@@ -132,6 +133,7 @@ final class YouTubeChat: ChatSource {
 
     private func handle(_ action: [String: Any]) {
         guard let item = (action["addChatItemAction"] as? [String: Any])?["item"] as? [String: Any] else { return }
+        alert(item)
         let renderer = (item["liveChatTextMessageRenderer"] ?? item["liveChatPaidMessageRenderer"]) as? [String: Any]
         guard let r = renderer, let id = r["id"] as? String, seen.insert(id).inserted else { return }
         if seen.count > 2000 { seen.removeAll() }
@@ -166,6 +168,63 @@ final class YouTubeChat: ChatSource {
             }
         }
         onMessage?(ChatMessage(id: id, platform: .youtube, author: author, color: nil, badges: badges, parts: parts))
+    }
+
+    /// Super Chats, Super Stickers, memberships, gifted memberships and YouTube
+    /// gifts. Super Chats also stay in the chat as a line.
+    private func alert(_ item: [String: Any]) {
+        func text(_ value: Any?) -> String? {
+            guard let v = value as? [String: Any] else { return nil }
+            let s = v["simpleText"] as? String ?? v["content"] as? String
+                ?? (v["runs"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+            return s.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        }
+        guard let (key, value) = item.first, let r = value as? [String: Any] else { return }
+        // Super Chats are de-duplicated with the chat lines (after this); the rest here.
+        if let id = r["id"] as? String {
+            if key == "liveChatPaidMessageRenderer" {
+                guard !seen.contains(id) else { return }
+            } else {
+                guard seen.insert("alert-" + id).inserted else { return }
+            }
+        }
+        let author = text(r["authorName"]) ?? "Someone"
+        let alert: StreamAlert? = switch key {
+        case "liveChatPaidMessageRenderer":
+            StreamAlert(platform: .youtube, kind: .money, name: author, action: "sent a Super Chat",
+                        highlight: text(r["purchaseAmountText"]), message: text(r["message"]))
+        case "liveChatPaidStickerRenderer":
+            StreamAlert(platform: .youtube, kind: .money, name: author, action: "sent a Super Sticker",
+                        highlight: text(r["purchaseAmountText"]))
+        case "liveChatMembershipItemRenderer":
+            // A milestone has "Member for 6 months" as its header; a new member has only a subtext.
+            if let milestone = text(r["headerPrimaryText"]) {
+                StreamAlert(platform: .youtube, kind: .subscription, name: author, action: "membership milestone:",
+                            highlight: milestone.replacingOccurrences(of: "Member for ", with: ""),
+                            message: text(r["message"]))
+            } else {
+                StreamAlert(platform: .youtube, kind: .subscription, name: author, action: "just became a member")
+            }
+        case "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer":
+            Self.giftedMemberships(r, author: text)
+        case "giftMessageViewModel":
+            // YouTube Gifts, bought with Jewels: "sent Star".
+            StreamAlert(platform: .youtube, kind: .money, name: author.trimmingCharacters(in: .whitespaces),
+                        action: "sent a gift:",
+                        highlight: text(r["text"]).map { $0.hasPrefix("sent ") ? String($0.dropFirst(5)) : $0 })
+        default:
+            nil
+        }
+        if let alert { onAlert?(alert) }
+    }
+
+    /// "Gifted 5 Channel memberships": the count is the only number in the header.
+    private static func giftedMemberships(_ r: [String: Any], author: ((Any?) -> String?)) -> StreamAlert {
+        let header = ((r["header"] as? [String: Any])?["liveChatSponsorshipsHeaderRenderer"] as? [String: Any]) ?? [:]
+        let line = author(header["primaryText"]) ?? ""
+        let count = match(#"(\d+)"#, in: line).flatMap(Int.init) ?? 1
+        return StreamAlert(platform: .youtube, kind: .gift, name: author(header["authorName"]) ?? "Someone",
+                           action: "gifted", highlight: count == 1 ? "1 membership" : "\(count) memberships")
     }
 
     private static func match(_ pattern: String, in text: String) -> String? {

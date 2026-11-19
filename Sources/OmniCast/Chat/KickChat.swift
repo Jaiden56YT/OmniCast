@@ -7,6 +7,7 @@ import Foundation
 final class KickChat: ChatSource {
     var onMessage: ((ChatMessage) -> Void)?
     var onStatus: ((ChatStatus) -> Void)?
+    var onAlert: ((StreamAlert) -> Void)?
 
     /// Used if asking Kick for the chat server fails.
     static let defaultServer = URL(string: "wss://realtime.us-east-1.platform.kick.com/connection/websocket")!
@@ -19,6 +20,8 @@ final class KickChat: ChatSource {
     private var running = false
     private var retryDelay: TimeInterval = 2
     private var renewal: DispatchWorkItem?
+    /// Kick sends each Kicks gift twice.
+    private var seenGifts = Set<String>()
 
     init(channel: String, chatroomID: Int? = nil) {
         slug = channel.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@ ").union(.whitespaces))
@@ -114,6 +117,8 @@ final class KickChat: ChatSource {
         task.resume()
         send(task, ["id": 1, "connect": ["token": token, "name": "js"]])
         send(task, ["id": 2, "subscribe": ["channel": "chatrooms.\(chatroom).v2"]])
+        // The channel's own feed carries Kicks (tips) and the activity feed.
+        if let channelID { send(task, ["id": 3, "subscribe": ["channel": "channel_\(channelID)"]]) }
         receive(task)
     }
 
@@ -184,10 +189,13 @@ final class KickChat: ChatSource {
             return
         }
         guard let pub = ((message["push"] as? [String: Any])?["pub"] as? [String: Any])?["data"] as? [String: Any],
-              pub["event"] as? String == "App\\Events\\ChatMessageEvent",
+              let event = pub["event"] as? String,
               let raw = pub["data"] as? String,
-              let data = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any],
-              let sender = data["sender"] as? [String: Any] else { return }
+              let data = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] else { return }
+        guard event == "App\\Events\\ChatMessageEvent", let sender = data["sender"] as? [String: Any] else {
+            if let alert = alert(event, data) { onAlert?(alert) }
+            return
+        }
         let identity = sender["identity"] as? [String: Any] ?? [:]
         let badges = (identity["badges"] as? [[String: Any]] ?? []).compactMap { b -> ChatMessage.Badge? in
             switch b["type"] as? String {
@@ -204,6 +212,44 @@ final class KickChat: ChatSource {
             author: sender["username"] as? String ?? "someone",
             color: identity["color"] as? String, badges: badges,
             parts: Self.parts(data["content"] as? String ?? "")))
+    }
+
+    /// Subs, gifted subs, Kicks and hosts, as seen on kick.com's own connection.
+    private func alert(_ event: String, _ d: [String: Any]) -> StreamAlert? {
+        func int(_ v: Any?) -> Int? { v as? Int ?? (v as? String).flatMap { Int($0) } }
+        func name(_ v: Any?) -> String { (v as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Someone" }
+        switch event.replacingOccurrences(of: "App\\Events\\", with: "") {
+        case "SubscriptionEvent":
+            let months = int(d["months"]) ?? 1
+            return months > 1
+                ? StreamAlert(platform: .kick, kind: .subscription, name: name(d["username"]), action: "resubscribed for",
+                              highlight: "\(months) months")
+                : StreamAlert(platform: .kick, kind: .subscription, name: name(d["username"]), action: "just subscribed")
+        case "GiftedSubscriptionsEvent":
+            let count = (d["gifted_usernames"] as? [Any])?.count ?? 1
+            return StreamAlert(platform: .kick, kind: .gift, name: name(d["gifter_username"]), action: "gifted",
+                               highlight: count == 1 ? "1 sub" : "\(count) subs")
+        case "StreamHostEvent":
+            let viewers = int(d["number_viewers"]) ?? 0
+            return StreamAlert(platform: .kick, kind: .raid, name: name(d["host_username"]), action: "hosted with",
+                               highlight: viewers == 1 ? "1 viewer" : "\(viewers) viewers",
+                               message: d["optional_message"] as? String)
+        case "KicksGifted":
+            guard seenGifts.insert(d["gift_transaction_id"] as? String ?? UUID().uuidString).inserted else { return nil }
+            if seenGifts.count > 500 { seenGifts.removeAll() }
+            let gift = d["gift"] as? [String: Any] ?? [:]
+            let amount = int(gift["amount"]) ?? 0
+            let kicks = amount == 1 ? "1 Kick" : "\(amount) Kicks"
+            return StreamAlert(platform: .kick, kind: .money, name: name((d["sender"] as? [String: Any])?["username"]),
+                               action: "sent", highlight: (gift["name"] as? String).map { "\($0) · \(kicks)" } ?? kicks,
+                               message: d["message"] as? String)
+        case "NewActivityFeedEvent" where (d["type"] as? String ?? "").contains("follow"),
+             "FollowersUpdated" where d["followed"] as? Bool == true && d["username"] is String:
+            // Not seen on public channels in testing; handled in case Kick sends it to the channel owner.
+            return StreamAlert(platform: .kick, kind: .follow, name: name(d["username"]), action: "just followed")
+        default:
+            return nil
+        }
     }
 
     /// Emotes arrive inline as "[emote:12345:name]".

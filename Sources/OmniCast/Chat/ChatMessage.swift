@@ -69,6 +69,8 @@ enum ChatStatus: Equatable {
 /// A platform's chat reader. Calls back on the main queue.
 protocol ChatSource: AnyObject {
     var onMessage: ((ChatMessage) -> Void)? { get set }
+    /// Subs, tips, raids and the like that arrive on the chat connection.
+    var onAlert: ((StreamAlert) -> Void)? { get set }
     var onStatus: ((ChatStatus) -> Void)? { get set }
     func start()
     func stop()

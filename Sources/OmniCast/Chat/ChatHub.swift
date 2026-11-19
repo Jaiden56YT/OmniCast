@@ -48,6 +48,7 @@ final class ChatHub {
             }
             source.onStatus = { [weak self] in self?.status[platform] = $0 }
             source.onMessage = { [weak self] in self?.add($0) }
+            source.onAlert = { AlertOverlay.shared.post($0) }
             sources[platform] = source
             source.start()
         }

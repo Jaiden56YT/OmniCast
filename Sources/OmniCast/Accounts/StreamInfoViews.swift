@@ -289,7 +289,10 @@ struct AccountsSettingsView: View {
                 Spacer()
                 if busy == p { ProgressView().controlSize(.small) }
                 if connected != nil {
-                    Button("Sign out", role: .destructive, action: signOut)
+                    Button("Sign out", role: .destructive) {
+                        signOut()
+                        AlertSources.shared.restart()
+                    }
                 }
                 Button(connected == nil ? "Connect" : "Reconnect") {
                     busy = p
@@ -297,6 +300,7 @@ struct AccountsSettingsView: View {
                     Task {
                         do { try await connect() } catch { errors[p] = error.localizedDescription }
                         busy = nil
+                        AlertSources.shared.restart()
                     }
                 }
                 .disabled(busy != nil)

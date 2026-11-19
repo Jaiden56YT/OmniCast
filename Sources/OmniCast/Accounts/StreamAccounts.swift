@@ -56,7 +56,8 @@ final class TokenKeeper {
 
 // MARK: - Twitch
 
-/// Twitch Helix with a user token (scope channel:manage:broadcast). Sign-in is
+/// Twitch Helix with a user token (scopes channel:manage:broadcast for the
+/// title and game, moderator:read:followers for follow alerts). Sign-in is
 /// Twitch's device-code flow: the app shows a code, you approve it at
 /// twitch.tv/activate, and only a Client ID is needed (a "Public" app).
 @MainActor
@@ -73,7 +74,8 @@ final class TwitchAccount {
     private(set) var pendingCode: String?
 
     private let tokens = TokenKeeper("twitch", name: "Twitch")
-    private static let scopes = "channel:manage:broadcast"
+    private static let scopes = "channel:manage:broadcast \(followScope)"
+    static let followScope = "moderator:read:followers"
 
     init() {
         tokens.refresher = { [weak self] old in
@@ -160,6 +162,27 @@ final class TwitchAccount {
         if let category { body["game_id"] = category.id }
         guard !body.isEmpty else { return }
         _ = try await api("channels", ["broadcaster_id": userID ?? ""], method: "PATCH", body: body)
+    }
+
+    /// Asks Twitch to send follows of your channel to an EventSub WebSocket
+    /// session. Accounts connected before follow alerts existed lack the scope
+    /// and have to sign in again.
+    func subscribeToFollows(session: String) async throws {
+        let token = try await tokens.valid()
+        let (status, json) = try await HTTP.request(URL(string: "https://id.twitch.tv/oauth2/validate")!,
+                                                    headers: ["Authorization": "OAuth \(token.access)"])
+        guard status == 200 else { throw AccountError.message("Twitch signed you out. Connect again in Settings → Accounts.") }
+        let scopes = (json as? [String: Any])?["scopes"] as? [String] ?? []
+        guard scopes.contains(Self.followScope) else {
+            throw AccountError.message("Sign in to Twitch again (Settings → Accounts) to allow follow alerts")
+        }
+        if userID == nil { try await loadUser() }
+        let id = userID ?? ""
+        _ = try await api("eventsub/subscriptions", method: "POST", body: [
+            "type": "channel.follow", "version": "2",
+            "condition": ["broadcaster_user_id": id, "moderator_user_id": id],
+            "transport": ["method": "websocket", "session_id": session],
+        ])
     }
 
     func search(_ query: String) async throws -> [StreamCategory] {
@@ -360,6 +383,18 @@ final class YouTubeAccount {
             if let item = (json["items"] as? [[String: Any]])?.first { return item }
         }
         throw AccountError.message("No live or scheduled YouTube stream to rename yet. Go live (or schedule one) first.")
+    }
+
+    /// Your newest subscribers, newest first. YouTube only lists people whose
+    /// subscriptions are public, and only the most recent ones.
+    func recentSubscribers() async throws -> [(id: String, name: String)] {
+        let json = try await api("subscriptions", ["part": "subscriberSnippet", "myRecentSubscribers": "true",
+                                                   "maxResults": "50"])
+        return (json["items"] as? [[String: Any]] ?? []).compactMap { item in
+            let snippet = item["subscriberSnippet"] as? [String: Any]
+            guard let id = snippet?["channelId"] as? String ?? item["id"] as? String else { return nil }
+            return (id, snippet?["title"] as? String ?? "Someone")
+        }
     }
 
     func current() async throws -> ChannelInfo {
