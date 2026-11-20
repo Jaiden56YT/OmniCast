@@ -628,6 +628,7 @@ OC_API void oc_app_channel_remove(int32_t channel)
 {
 	if (channel < OC_CH_APP_FIRST || channel >= OC_CH_COUNT || !apps[channel].source)
 		return;
+	music_forget(apps[channel].source);
 	audio_attach(channel, nullptr);
 	obs_set_output_source(APP_OUTPUT_BASE + channel, nullptr);
 	obs_source_release(apps[channel].source);

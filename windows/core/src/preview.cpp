@@ -52,7 +52,11 @@ static bool make_buffers(Preview &p)
 {
 	if (FAILED(p.swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&p.back)))
 		return false;
-	p.target = gs_texture_create(p.cx, p.cy, GS_BGRA_UNORM, 1, nullptr, GS_RENDER_TARGET);
+	// GS_BGRA, not GS_BGRA_UNORM: libobs draws the canvas in linear light and
+	// relies on an sRGB view of the target to encode it back. A plain UNORM
+	// target has no sRGB view, so the preview came out much darker than the
+	// stream. (Same format family as the swap chain's buffer, so the copy works.)
+	p.target = gs_texture_create(p.cx, p.cy, GS_BGRA, 1, nullptr, GS_RENDER_TARGET);
 	return p.target != nullptr;
 }
 

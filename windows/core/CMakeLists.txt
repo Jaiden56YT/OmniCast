@@ -44,6 +44,7 @@ add_library(OmniCore SHARED
   src/monitor.cpp
   src/overlay.cpp
   src/vst3.cpp
+  src/tempo.cpp
   # Steinberg's VST3 interfaces (MIT): the interface ids for hosting plugins.
   "${VENDOR}/vst3/pluginterfaces/base/funknown.cpp"
 )

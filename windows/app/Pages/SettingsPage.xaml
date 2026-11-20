@@ -274,6 +274,16 @@
             <Grid Style="{StaticResource RowStyle}">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
+                    <TextBlock x:Name="FollowTitle" Text="Muze follows the music&apos;s key and tempo" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="Muze Auto Key listens to the music app&apos;s channel and sends its key to Muze (set Muze&apos;s Key Link to Follow); OmniCast tracks the beat and gives Muze the tempo." />
+                    <TextBlock x:Name="FollowStatus" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ToggleSwitch x:Name="FollowOn" Grid.Column="1" Toggled="Follow_Toggled" AutomationProperties.Name="Muze follows the music" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="Now-playing card" Style="{StaticResource RowTitle}" />
                     <TextBlock Style="{StaticResource RowDescription}" Text="Shows for 30 seconds when a song starts." />
                 </StackPanel>

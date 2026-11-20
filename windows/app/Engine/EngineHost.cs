@@ -376,6 +376,8 @@ public sealed class EngineHost : INotifyPropertyChanged
     // [untitled] has no Windows app, so it means the browser's channel.
     private static readonly string[] BrowserExes = { "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe" };
 
+    public static bool IsBrowserExe(string exe) => BrowserExes.Contains(exe);
+
     public void SelectMusicApp(string source)
     {
         Settings.Music.Source = source;

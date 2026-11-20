@@ -250,7 +250,16 @@ works). Each one has **Open editor** (the plugin's own window), **On**, and
 **Remove**. They run on the mic before its level, so the stream, recordings,
 the monitor mix and the Discord voice output all get them. Plugins load only
 while they're in the chain, and their settings are saved when OmniCast closes.
-Plugins with tempo-synced effects see a steady 120 BPM transport.
+Plugins with tempo-synced effects see a running transport at the music's
+tempo (120 BPM when nothing is being followed).
+
+**Muze follows the music** (Settings › Music, on by default): when the music
+app on stream (Spotify, or your browser for [untitled]) has its own channel,
+OmniCast runs **Muze Auto Key** on that channel, which hands the song's key to
+Muze (set Muze's Key Link to Follow), and tracks the beat itself to give Muze
+the tempo. The status line shows what Muze is following, e.g. "A Natural
+Minor · 128 BPM". It needs Muze Auto Key installed and Muze on the mic; a new
+song starts the beat tracking afresh.
 
 ## Overlays
 
@@ -307,7 +316,6 @@ only if it was OmniCast's copy.
 
 - Moving and resizing overlays by dragging them on the preview (they use
   sensible default places for now)
-- Muze following the music's key and tempo
 - Animated PNGtuber and call images (the first frame shows for now)
 - Installing VB-CABLE automatically (waiting on VB-Audio's permission; see
   Discord audio above)
@@ -388,7 +396,8 @@ The script notices the list changed and extracts again.
   streaming, recording, audio meters, the Discord outputs (`src\audio_out.cpp`),
   per-app and desktop audio (`src\proc_audio.cpp`), the monitor mix
   (`src\monitor.cpp`), overlay layers (`src\overlay.cpp`), the VST3 host
-  (`src\vst3.cpp`) and the virtual camera (`src\vcam.cpp`).
+  (`src\vst3.cpp`), beat tracking (`src\tempo.cpp`) and the virtual camera
+  (`src\vcam.cpp`).
 - `windows\app`: the **WinUI 3** app in C#, calling OmniCore through
   P/Invoke (`Engine\Native.cs`). `Engine\EngineHost.cs` holds the app's state;
   `Pages\` are Studio, Destinations and Settings; `Services\` has settings,
