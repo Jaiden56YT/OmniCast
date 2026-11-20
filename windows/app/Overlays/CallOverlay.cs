@@ -31,6 +31,7 @@ public sealed class CallOverlay
         public string Image = "";      // what was drawn (avatar URL or file paths), to skip redraws
         public double Aspect = 1;
         public bool Ready, Talking;
+        public DateTime HopStart = DateTime.MinValue;
     }
 
     private readonly Dictionary<string, Person> _people = new();
@@ -199,24 +200,73 @@ public sealed class CallOverlay
         return t;
     }
 
-    private void Place(Person p)
+    // Both images sit in the same place: talking just swaps them. With "Hop"
+    // on, the talking image does one smooth little bounce when talking starts
+    // (up and back down in 0.2 s), instead of jumping up and staying there.
+    private void Place(Person p, double lift = 0)
     {
         var l = S.Layouts.TryGetValue(p.Id, out var lay) ? lay : new PersonLayout();
         double k = OverlayCanvas.Scale;
         float h = (float)(l.Size * k), w = (float)(l.Size * p.Aspect * k);
-        float x = (float)(l.X * k - w / 2), y = (float)(l.Y * k - h / 2), lift = (float)(l.Size * 0.06 * k);
+        float x = (float)(l.X * k - w / 2), y = (float)(l.Y * k - h / 2);
         Native.oc_layer_place(p.Id + "-idle", 0, 1, x, y, w, h);
-        Native.oc_layer_place(p.Id + "-talk", 0, 1, x, y - lift, w, h);
+        Native.oc_layer_place(p.Id + "-talk", 0, 1, x, (float)(y - lift * k), w, h);
         Native.oc_layer_place(p.Id + "-idle", 1, 0, 0, 0, 1, 1);
         Native.oc_layer_place(p.Id + "-talk", 1, 0, 0, 0, 1, 1);
         Apply(p);
     }
 
+    private const double HopSeconds = 0.2;
+    private DispatcherQueueTimer? _hop;
+
     private void SetTalking(string id, bool on)
     {
         if (!_people.TryGetValue(id, out var p)) return;
+        bool started = on && !p.Talking;
         p.Talking = on;
-        if (p.Ready) Apply(p);
+        if (!p.Ready) return;
+        Apply(p);
+        if (started && S.TalkMotion == "hop")
+        {
+            p.HopStart = DateTime.UtcNow;
+            if (_hop == null)
+            {
+                _hop = DispatcherQueue.GetForCurrentThread().CreateTimer();
+                _hop.Interval = TimeSpan.FromMilliseconds(1000.0 / 60);
+                _hop.Tick += (_, _) => StepHops();
+            }
+            _hop.Start();
+        }
+    }
+
+    private void StepHops()
+    {
+        bool any = false;
+        foreach (var p in _people.Values.Where(p => p.Ready && p.HopStart != DateTime.MinValue))
+        {
+            double t = (DateTime.UtcNow - p.HopStart).TotalSeconds / HopSeconds;
+            var l = S.Layouts.TryGetValue(p.Id, out var lay) ? lay : new PersonLayout();
+            if (t >= 1)
+            {
+                p.HopStart = DateTime.MinValue;
+                Place(p);
+                continue;
+            }
+            any = true;
+            Place(p, l.Size * 0.05 * Math.Sin(Math.PI * t)); // eased: up, then back down
+        }
+        if (!any) _hop?.Stop();
+    }
+
+    // ---------------------------------------------------------------- arrange
+
+    // Who can be arranged right now: (id, label, aspect).
+    public List<(string Id, string Label, double Aspect)> Arrangeable() =>
+        _people.Values.Where(p => p.Ready).Select(p => (p.Id, p.Id == Me ? "Your PNGtuber" : DiscordCall.Current.Members.FirstOrDefault(m => m.Id == p.Id)?.Name ?? "Someone", p.Aspect)).ToList();
+
+    public void PlaceAll()
+    {
+        foreach (var p in _people.Values.Where(p => p.Ready)) Place(p);
     }
 
     private static void Apply(Person p)

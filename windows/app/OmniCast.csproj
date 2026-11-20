@@ -6,7 +6,7 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>OmniCast</RootNamespace>
     <AssemblyName>OmniCast</AssemblyName>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <Product>OmniCast for Windows</Product>
     <Copyright>GPL-2.0-or-later</Copyright>
     <ApplicationManifest>app.manifest</ApplicationManifest>

@@ -86,6 +86,15 @@
                     <Border Style="{StaticResource PreviewLabel}">
                         <TextBlock x:Name="WideLabel" Text="16:9 · YouTube, Twitch, Kick" Foreground="White" FontSize="12" />
                     </Border>
+                    <Grid x:Name="WideArrangeHost" />
+                    <ToggleButton x:Name="ArrangeButton" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                                  Padding="10,4" Click="Arrange_Click" IsEnabled="False"
+                                  ToolTipService.ToolTip="Move and resize the camera, chat, now-playing card, your PNGtuber and the Discord people">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE7C2;" FontSize="13" />
+                            <TextBlock x:Name="ArrangeText" Text="Arrange" FontSize="12" />
+                        </StackPanel>
+                    </ToggleButton>
                 </Grid>
             </Border>
             <Border Grid.Column="1" Background="Black" CornerRadius="{StaticResource OverlayCornerRadius}">
@@ -95,6 +104,7 @@
                     <Border Style="{StaticResource PreviewLabel}">
                         <TextBlock Text="9:16 · TikTok, Instagram" Foreground="White" FontSize="12" />
                     </Border>
+                    <Grid x:Name="TallArrangeHost" />
                 </Grid>
             </Border>
 

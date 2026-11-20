@@ -284,7 +284,21 @@ changes, so they cost next to nothing per frame.
   the section has the four steps (Client ID and Secret, then Authorize in
   Discord).
 - **Your PNGtuber**: pick an idle and a talking image; it talks when your mic
-  does (sensitivity High, Medium or Low).
+  does (sensitivity High, Medium or Low). **When talking** picks whether the
+  image just swaps (the default) or does one small, smooth hop as you start
+  talking; the call's people do the same.
+
+### Arrange
+
+**Arrange** (top-right of the 16:9 preview) puts an outline on everything you
+can place, on both previews: the camera, the chat, the now-playing card, your
+PNGtuber and the people in your Discord call. Drag one to move it, drag its
+corner to resize it, or select it and use the arrow keys (Shift for bigger
+steps, Ctrl to resize). **Reset** on a selected item puts it back in its
+default place. Changes show on the canvas as you drag and are saved; **Done**
+leaves Arrange. The camera's place applies to every scene that shows it in a
+corner (16:9) or split (9:16), and picking a card corner in Settings puts a
+dragged card back in that corner.
 
 ## Music switch
 
@@ -314,8 +328,6 @@ only if it was OmniCast's copy.
 
 ## Coming next
 
-- Moving and resizing overlays by dragging them on the preview (they use
-  sensible default places for now)
 - Animated PNGtuber and call images (the first frame shows for now)
 - Installing VB-CABLE automatically (waiting on VB-Audio's permission; see
   Discord audio above)

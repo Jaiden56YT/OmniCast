@@ -155,6 +155,8 @@ public static class Native
     [DllImport(Dll)] public static extern void oc_music_set_tempo(double bpm);
     [DllImport(Dll)] public static extern int oc_music_muze_key(byte[] buf, int len);
 
+    [DllImport(Dll)] public static extern void oc_camera_box(int canvas, float x, float y, float w, float h);
+
     // Overlay layers
     [DllImport(Dll)] public static extern int oc_layer_set_image([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [DllImport(Dll)] public static extern void oc_layer_place([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int canvas, int show, float x, float y, float w, float h);

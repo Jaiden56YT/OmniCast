@@ -31,6 +31,12 @@ public sealed partial class StudioPage : Page
         RebuildAudioRows();
         _host.MixerChanged += () => { if (_loaded) RebuildAudioRows(); };
 
+        _arrange = new[] { new ArrangeLayer(0) { Visibility = Visibility.Collapsed }, new ArrangeLayer(1) { Visibility = Visibility.Collapsed } };
+        WideArrangeHost.Children.Add(_arrange[0]);
+        TallArrangeHost.Children.Add(_arrange[1]);
+        _host.ScenesChanged += RebuildArrange;
+        OmniCast.Discord.DiscordCall.Current.MembersChanged += RebuildArrange;
+
         var dq = DispatcherQueue.GetForCurrentThread();
         _meterTimer = dq.CreateTimer();
         _meterTimer.Interval = TimeSpan.FromMilliseconds(33);
@@ -181,6 +187,8 @@ public sealed partial class StudioPage : Page
     {
         bool running = _host.IsRunning;
         LiveButton.IsEnabled = running;
+        ArrangeButton.IsEnabled = running;
+        if (!running && ArrangeButton.IsChecked == true) SetArranging(false);
         RecordButton.IsEnabled = running;
         LiveText.Text = _host.IsLive ? "End stream" : "Go live";
         LiveIcon.Glyph = _host.IsLive ? "\uE71A" : "\uE93E";
@@ -280,6 +288,34 @@ public sealed partial class StudioPage : Page
     {
         _host.SetVirtualCameraCanvas(ReferenceEquals(sender, VcamTall) ? 1 : 0);
         RefreshUi();
+    }
+
+    // ---------------------------------------------------------------- arrange
+
+    private ArrangeLayer[] _arrange = Array.Empty<ArrangeLayer>();
+
+    private void Arrange_Click(object sender, RoutedEventArgs e) => SetArranging(ArrangeButton.IsChecked == true);
+
+    private void SetArranging(bool on)
+    {
+        ArrangeButton.IsChecked = on;
+        ArrangeText.Text = on ? "Done" : "Arrange";
+        for (int c = 0; c < _arrange.Length; c++)
+        {
+            int canvas = c;
+            if (on) _arrange[c].Show(() => OmniCast.Overlays.Arrange.Items(canvas));
+            else _arrange[c].Hide();
+        }
+        if (on && OmniCast.Overlays.Arrange.Items(0).Count + OmniCast.Overlays.Arrange.Items(1).Count == 0)
+            ShowError("Nothing to arrange yet: turn on a camera, the chat, the now-playing card or your PNGtuber.");
+        else
+            ShowError(null);
+    }
+
+    private void RebuildArrange()
+    {
+        if (!_loaded) return;
+        foreach (var a in _arrange) a.Rebuild();
     }
 
     // ---------------------------------------------------------------- mixer

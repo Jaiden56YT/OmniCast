@@ -119,6 +119,8 @@ public sealed class MusicSettings
     public string Corner { get; set; } = "bottomLeft"; // topLeft, topRight, bottomLeft, bottomRight
     public bool Vertical { get; set; } = true;          // also on 9:16
     public bool Follow { get; set; } = true;            // Muze follows the music's key and tempo
+    public Box? CardWide { get; set; }                  // arranged by hand; null = the corner
+    public Box? CardTall { get; set; }
 }
 
 // The Discord call overlay and your PNGtuber. The Client Secret and Discord's
@@ -134,6 +136,7 @@ public sealed class DiscordSettings
     public string MeIdle { get; set; } = "";    // your PNGtuber images
     public string MeTalk { get; set; } = "";
     public double MeThreshold { get; set; } = -40; // dBFS: High -50, Medium -40, Low -30
+    public string TalkMotion { get; set; } = "none"; // none (swap the image), hop (a small bounce)
 }
 
 // Where a person is drawn on the 16:9 canvas (1920x1080 reference pixels):
@@ -214,6 +217,8 @@ public sealed class AppSettings
     public ChatSettings Chat { get; set; } = new();
     public MusicSettings Music { get; set; } = new();
     public List<MicPlugin> MicPlugins { get; set; } = new();
+    public Box? CameraWide { get; set; } // the camera arranged by hand (reference pixels); null = the layout's place
+    public Box? CameraTall { get; set; }
     public AccountsSettings Accounts { get; set; } = new();
     public StreamInfoSettings StreamInfo { get; set; } = new();
     public DiscordSettings Discord { get; set; } = new();

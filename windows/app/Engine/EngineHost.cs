@@ -187,6 +187,7 @@ public sealed class EngineHost : INotifyPropertyChanged
             ApplyChannel(ch);
         ApplyMixer();
         ApplyMicPlugins();
+        ApplyCameraBoxes();
         // Saved Discord outputs; a cable that's gone (uninstalled) just stays off.
         Native.oc_discord_output_set(Native.DiscordVoice, s.DiscordVoiceDevice);
         Native.oc_discord_output_set(Native.DiscordStreamAudio, s.DiscordStreamAudioDevice);
@@ -462,6 +463,19 @@ public sealed class EngineHost : INotifyPropertyChanged
         Settings.MicPlugins[slot].Enabled = on;
         Settings.Save();
         Native.oc_mic_plugin_bypass(slot, on ? 0 : 1);
+    }
+
+    // The camera where the user arranged it (or the layout's place).
+    public void ApplyCameraBoxes()
+    {
+        if (!IsRunning) return;
+        double k = Settings.VideoHeight / 1080.0;
+        for (int c = 0; c < 2; c++)
+        {
+            var b = c == 0 ? Settings.CameraWide : Settings.CameraTall;
+            if (b == null) Native.oc_camera_box(c, 0, 0, 0, 0);
+            else Native.oc_camera_box(c, (float)(b.X * k), (float)(b.Y * k), (float)(b.W * k), (float)(b.H * k));
+        }
     }
 
     public bool HasDiscordChannel => Settings.AppChannels.Any(a => DiscordExes.Contains(a.Exe));

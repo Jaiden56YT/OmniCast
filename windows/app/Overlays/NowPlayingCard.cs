@@ -109,13 +109,32 @@ public sealed class NowPlayingCard
         _hold?.Start();
     }
 
+    // Where the card goes (reference pixels): arranged by hand, or the chosen corner.
+    // 16:9: 40 px from the corner. 9:16: centred, at the top or just above the camera half.
+    public static Box Box(int canvas)
+    {
+        if ((canvas == 0 ? S.CardWide : S.CardTall) is Box b) return b;
+        bool left = S.Corner is "topLeft" or "bottomLeft", top = S.Corner is "topLeft" or "topRight";
+        return canvas == 0
+            ? new Box { X = left ? 40 : 1920 - CardW - 40, Y = top ? 40 : 1080 - CardH - 40, W = CardW, H = CardH }
+            : new Box { X = (1080 - CardW) / 2, Y = top ? 48 : 960 - CardH - 32, W = CardW, H = CardH };
+    }
+
+    public const double Aspect = CardW / CardH;
+
+    public void Replace()
+    {
+        if (EngineHost.Current.IsRunning) Place(0, 0);
+    }
+
     private void Place(float w, float h)
     {
         double k = OverlayCanvas.Scale;
-        bool left = S.Corner is "topLeft" or "bottomLeft", top = S.Corner is "topLeft" or "topRight";
-        // 16:9: 40 px from the corner. 9:16: centred, at the top or just above the camera half.
-        Native.oc_layer_place(Key, 0, 1, (float)((left ? 40 : 1920 - CardW - 40) * k), (float)((top ? 40 : 1080 - CardH - 40) * k), w, h);
-        Native.oc_layer_place(Key, 1, S.Vertical ? 1 : 0, (float)((1080 - CardW) / 2 * k), (float)((top ? 48 : 960 - CardH - 32) * k), w, h);
+        for (int c = 0; c < 2; c++)
+        {
+            var b = Box(c);
+            Native.oc_layer_place(Key, c, c == 0 || S.Vertical ? 1 : 0, (float)(b.X * k), (float)(b.Y * k), (float)(b.W * k), (float)(b.H * k));
+        }
     }
 
     private void FadeTo(double target)
