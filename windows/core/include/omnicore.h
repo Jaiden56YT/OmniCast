@@ -141,6 +141,10 @@ enum oc_transition {
 
 // Creates the scene, or updates it if the key exists (on air too).
 OC_API void oc_scene_set(const oc_scene_desc *scene);
+// Moves the camera to a box the user arranged (canvas pixels), in every scene;
+// w <= 0 = back to the layout's place. 16:9: the "screen + camera" layout
+// (the camera fits inside the box). 9:16: the split layout (fills the box).
+OC_API void oc_camera_box(int32_t canvas, float x, float y, float w, float h);
 // Removes a scene. The scene on air can't be removed.
 OC_API int32_t oc_scene_remove(const char *key);
 // Puts a scene on air on both canvases with a transition (duration_ms is

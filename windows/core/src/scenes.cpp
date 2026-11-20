@@ -167,6 +167,13 @@ struct Scene {
 };
 
 static std::map<std::string, std::unique_ptr<Scene>> scenes;
+
+// Where the camera goes when the user has arranged it (canvas pixels), per
+// canvas; w <= 0 = the layout's own place.
+struct CamBox {
+	float x = 0, y = 0, w = 0, h = 0;
+};
+static CamBox cam_box[2];
 static std::string on_air;
 
 static obs_source_t *transition[2] = {};
@@ -210,7 +217,10 @@ static void lay_out(Scene &s)
 		place(s, OC_WIDE, cam, 0, 0, ww, wh, OBS_BOUNDS_SCALE_OUTER, true);
 	} else {
 		place(s, OC_WIDE, s.screen, 0, 0, ww, wh, OBS_BOUNDS_SCALE_INNER, false);
-		if (wide == OC_WIDE_SCREEN_CAMERA) {
+		if (wide == OC_WIDE_SCREEN_CAMERA && cam_box[OC_WIDE].w > 0) {
+			const CamBox &b = cam_box[OC_WIDE];
+			place(s, OC_WIDE, cam, b.x, b.y, b.w, b.h, OBS_BOUNDS_SCALE_INNER, false);
+		} else if (wide == OC_WIDE_SCREEN_CAMERA) {
 			float cw = ww * 0.25f, ch = wh * 0.25f, m = wh * 0.025f;
 			bool right = s.corner == OC_CORNER_BOTTOM_RIGHT || s.corner == OC_CORNER_TOP_RIGHT;
 			bool bottom = s.corner == OC_CORNER_BOTTOM_RIGHT || s.corner == OC_CORNER_BOTTOM_LEFT;
@@ -230,7 +240,12 @@ static void lay_out(Scene &s)
 		place(s, OC_TALL, s.screen, 0, 0, tw, th, OBS_BOUNDS_SCALE_OUTER, true);
 	} else {
 		place(s, OC_TALL, s.screen, 0, 0, tw, th * 0.5f, OBS_BOUNDS_SCALE_INNER, false);
-		place(s, OC_TALL, cam, 0, th * 0.5f, tw, th * 0.5f, OBS_BOUNDS_SCALE_OUTER, true);
+		if (cam_box[OC_TALL].w > 0) {
+			const CamBox &b = cam_box[OC_TALL];
+			place(s, OC_TALL, cam, b.x, b.y, b.w, b.h, OBS_BOUNDS_SCALE_OUTER, true);
+		} else {
+			place(s, OC_TALL, cam, 0, th * 0.5f, tw, th * 0.5f, OBS_BOUNDS_SCALE_OUTER, true);
+		}
 	}
 }
 
@@ -437,4 +452,16 @@ OC_API int32_t oc_scene_activate(const char *key, int32_t kind, int32_t duration
 OC_API const char *oc_scene_active(void)
 {
 	return on_air.c_str();
+}
+
+// The camera's box on one canvas, in canvas pixels; w <= 0 puts it back in
+// the layout's own place. Used by the 16:9 "screen + camera" layout and the
+// 9:16 split layout, in every scene.
+OC_API void oc_camera_box(int32_t canvas, float x, float y, float w, float h)
+{
+	if (canvas < 0 || canvas > 1)
+		return;
+	cam_box[canvas] = w > 0 && h > 0 ? CamBox{x, y, w, h} : CamBox{};
+	for (auto &kv : scenes)
+		lay_out(*kv.second);
 }

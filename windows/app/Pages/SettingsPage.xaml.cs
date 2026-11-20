@@ -371,6 +371,13 @@ public sealed partial class SettingsPage : Page
         string source = (MusicSource.SelectedItem as ComboBoxItem)?.Tag as string ?? "spotify";
         m.CardEnabled = CardOn.IsOn;
         m.Corner = (CardCorner.SelectedItem as ComboBoxItem)?.Tag as string ?? "bottomLeft";
+        if (ReferenceEquals(sender, CardCorner))
+        {
+            // Picking a corner puts a card that was dragged somewhere back in a corner.
+            m.CardWide = null;
+            m.CardTall = null;
+            OmniCast.Overlays.NowPlayingCard.Current.Replace();
+        }
         m.Vertical = CardVertical.IsOn;
         if (ReferenceEquals(sender, MusicSource) && source != m.Source)
         {
@@ -398,6 +405,7 @@ public sealed partial class SettingsPage : Page
         CallDim.IsOn = d.DimQuiet;
         MeOn.IsOn = d.MeEnabled;
         MeSensitivity.SelectedIndex = d.MeThreshold <= -45 ? 0 : d.MeThreshold >= -35 ? 2 : 1;
+        TalkMotion.SelectedIndex = d.TalkMotion == "hop" ? 1 : 0;
         if (!_callHooked)
         {
             _callHooked = true;
@@ -442,6 +450,7 @@ public sealed partial class SettingsPage : Page
         d.DimQuiet = CallDim.IsOn;
         d.MeEnabled = MeOn.IsOn;
         d.MeThreshold = double.TryParse((MeSensitivity.SelectedItem as ComboBoxItem)?.Tag as string, out double t) ? t : -40;
+        d.TalkMotion = (TalkMotion.SelectedItem as ComboBoxItem)?.Tag as string ?? "none";
         _host.Settings.Save();
         OmniCast.Overlays.CallOverlay.Current.Refresh();
         UpdateCallStatus();

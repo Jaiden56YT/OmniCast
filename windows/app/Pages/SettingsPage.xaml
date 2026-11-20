@@ -285,7 +285,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
                     <TextBlock Text="Now-playing card" Style="{StaticResource RowTitle}" />
-                    <TextBlock Style="{StaticResource RowDescription}" Text="Shows for 30 seconds when a song starts." />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="Shows for 30 seconds when a song starts. Move and resize it with Arrange on the Studio preview." />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Button Content="Preview card" Click="MusicPreview_Click" />
@@ -370,6 +370,17 @@
                 </StackPanel>
                 <ComboBox x:Name="MeSensitivity" Grid.Column="1" MinWidth="160" VerticalAlignment="Center" SelectionChanged="Call_Changed" AutomationProperties.Name="Mic sensitivity">
                     <ComboBoxItem Content="High" Tag="-50" /><ComboBoxItem Content="Medium" Tag="-40" /><ComboBoxItem Content="Low" Tag="-30" />
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="When talking" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" TextWrapping="Wrap"
+                               Text="For your PNGtuber and the call&apos;s people. Move and resize them with Arrange on the Studio preview." />
+                </StackPanel>
+                <ComboBox x:Name="TalkMotion" Grid.Column="1" MinWidth="160" VerticalAlignment="Center" SelectionChanged="Call_Changed" AutomationProperties.Name="When talking">
+                    <ComboBoxItem Content="Just swap images" Tag="none" /><ComboBoxItem Content="Small hop" Tag="hop" />
                 </ComboBox>
             </Grid>
 
