@@ -118,6 +118,7 @@ public sealed class MusicSettings
     public bool CardEnabled { get; set; } = true;
     public string Corner { get; set; } = "bottomLeft"; // topLeft, topRight, bottomLeft, bottomRight
     public bool Vertical { get; set; } = true;          // also on 9:16
+    public bool Follow { get; set; } = true;            // Muze follows the music's key and tempo
 }
 
 // The Discord call overlay and your PNGtuber. The Client Secret and Discord's

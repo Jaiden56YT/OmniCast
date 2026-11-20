@@ -29,6 +29,7 @@
 
 #include <windows.h>
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <cstring>
 #include <map>
@@ -41,6 +42,9 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 namespace oc {
+
+// The tempo plugins see as the host's (Muze's synced effects): 120 until the music is followed.
+static std::atomic<double> host_tempo{120.0};
 
 // ---------------------------------------------------------------- COM-ish helpers
 
@@ -298,6 +302,7 @@ struct Plugin {
 	std::mutex audio; // held while processing; load/unload/state take it too
 	bool active = false;
 	std::string name;
+	double beats = 0; // transport position, in beats
 
 	static constexpr int32 MAX_BLOCK = 1024;
 
@@ -478,6 +483,11 @@ void Plugin::process(float **planar, uint32_t frames)
 			}
 		}
 
+		// A playing transport at the host tempo in 4/4, continuous across tempo changes.
+		context.tempo = host_tempo.load(std::memory_order_relaxed);
+		context.projectTimeMusic = beats;
+		context.barPositionMusic = std::floor(beats / 4.0) * 4.0;
+
 		ProcessData data{};
 		data.processMode = kRealtime;
 		data.symbolicSampleSize = kSample32;
@@ -493,8 +503,7 @@ void Plugin::process(float **planar, uint32_t frames)
 				memcpy(planar[c] + done, out[c].data(), n * sizeof(float));
 
 		context.projectTimeSamples += n;
-		context.projectTimeMusic = (double)context.projectTimeSamples / 48000.0 * context.tempo / 60.0;
-		context.barPositionMusic = (double)((int64)(context.projectTimeMusic / 4.0)) * 4.0;
+		beats += (double)n / 48000.0 * context.tempo / 60.0;
 		done += n;
 	}
 }
@@ -771,8 +780,51 @@ static Filter *slot(int i)
 	return i >= 0 && i < SLOTS && slot_filter[i] ? (Filter *)obs_obj_get_data(slot_filter[i]) : nullptr;
 }
 
+static obs_source_t *follow_filter = nullptr, *follow_source = nullptr;
+
+static void unfollow()
+{
+	tempo_listen(nullptr);
+	if (follow_filter) {
+		if (follow_source)
+			obs_source_filter_remove(follow_source, follow_filter);
+		obs_source_release(follow_filter);
+	}
+	follow_filter = follow_source = nullptr;
+}
+
+// An app channel is going away: stop following it first.
+void music_forget(obs_source_t *source)
+{
+	if (source && source == follow_source)
+		unfollow();
+}
+
+static std::string installed_vst3(const char *name)
+{
+	std::string json = "[";
+	bool first = true;
+	list_vst3(json, first);
+	std::string key = std::string("\"name\":\"") + name + "\"";
+	size_t at = json.find(key);
+	if (at == std::string::npos)
+		return "";
+	size_t id = json.rfind("\"id\":\"", at);
+	if (id == std::string::npos)
+		return "";
+	id += 6;
+	std::string out;
+	for (size_t i = id; i < json.size() && json[i] != '"'; i++) {
+		if (json[i] == '\\' && i + 1 < json.size())
+			i++;
+		out += json[i];
+	}
+	return out;
+}
+
 void vst3_release()
 {
+	unfollow();
 	for (int i = 0; i < SLOTS; i++)
 		oc_mic_plugin_set(i, "", nullptr, 0);
 	obs_wait_for_destroy_queue(); // plugins unload on their UI thread, before it stops
@@ -932,4 +984,88 @@ OC_API void oc_mic_plugin_bypass(int32_t index, int32_t bypass)
 {
 	if (index >= 0 && index < SLOTS && slot_filter[index])
 		obs_source_set_enabled(slot_filter[index], bypass == 0);
+}
+
+// ---------------------------------------------------------------- Muze follows the music
+
+OC_API int32_t oc_music_follow(int32_t channel)
+{
+	unfollow();
+	if (channel < 0 || !engine.running)
+		return 1;
+	obs_source_t *source = audio_channel_source(channel);
+	if (!source)
+		return 0;
+	follow_source = source;
+	tempo_listen(source); // the beat, even without Muze Auto Key
+	std::string path = installed_vst3("Muze Auto Key");
+	if (path.empty()) {
+		blog(LOG_INFO, "[OmniCast] music follow on channel %d: tempo only (Muze Auto Key isn't installed)", channel);
+		return 0;
+	}
+	obs_source_t *filter = obs_source_create_private("omni_vst3_filter", "Muze Auto Key", nullptr);
+	if (!filter)
+		return 0;
+	auto *f = (Filter *)obs_obj_get_data(filter);
+	Plugin *p = nullptr;
+	std::string error;
+	run_on_ui([&] {
+		p = new Plugin;
+		if (!p->load(path, error)) {
+			p->unload();
+			delete p;
+			p = nullptr;
+		}
+	});
+	if (!p) {
+		blog(LOG_WARNING, "[OmniCast] Muze Auto Key: %s", error.c_str());
+		obs_source_release(filter);
+		return 0;
+	}
+	f->plugin = p;
+	follow_filter = filter;
+	obs_source_filter_add(source, filter);
+	blog(LOG_INFO, "[OmniCast] music follow on channel %d: Muze Auto Key + tempo", channel);
+	return 1;
+}
+
+OC_API void oc_music_set_tempo(double bpm)
+{
+	if (bpm >= 40 && bpm <= 300)
+		host_tempo = bpm;
+}
+
+// Muze's key as it shows it ("A Natural Minor"), from its Auto-Tune Key and
+// Auto-Tune Scale parameters. 0 when Muze isn't on the mic.
+OC_API int32_t oc_music_muze_key(char *out, int32_t len)
+{
+	if (out && len)
+		out[0] = 0;
+	Plugin *muze = nullptr;
+	for (int i = 0; i < SLOTS && !muze; i++)
+		if (Filter *f = slot(i); f && f->plugin && _stricmp(f->plugin->name.c_str(), "Muze") == 0)
+			muze = f->plugin;
+	if (!muze || !muze->controller)
+		return 0;
+	std::string key, scale;
+	run_on_ui([&] {
+		IEditController *c = muze->controller;
+		for (int32 i = 0; i < c->getParameterCount(); i++) {
+			ParameterInfo info{};
+			if (c->getParameterInfo(i, info) != kResultOk)
+				continue;
+			std::string title = narrow((const wchar_t *)info.title);
+			if (title != "Auto-Tune Key" && title != "Auto-Tune Scale")
+				continue;
+			String128 s{};
+			if (c->getParamStringByValue(info.id, c->getParamNormalized(info.id), s) != kResultOk)
+				continue;
+			(title == "Auto-Tune Key" ? key : scale) = narrow((const wchar_t *)s);
+		}
+	});
+	if (key.empty())
+		return 0;
+	std::string text = scale.empty() ? key : key + " " + scale;
+	set_err(out, len, text.c_str());
+	return 1;
 }

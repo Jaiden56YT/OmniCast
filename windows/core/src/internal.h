@@ -86,6 +86,11 @@ void vst3_register();
 void vst3_release();
 void list_vst3(std::string &json, bool &first);
 
+// tempo.cpp
+void tempo_listen(obs_source_t *source); // nullptr stops
+void music_forget(obs_source_t *source);  // vst3.cpp
+obs_source_t *audio_channel_source(int channel); // audio.cpp
+
 // vcam.cpp
 void vcam_stop();
 

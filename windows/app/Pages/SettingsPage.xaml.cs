@@ -318,6 +318,15 @@ public sealed partial class SettingsPage : Page
         CardOn.IsOn = m.CardEnabled;
         CardCorner.SelectedIndex = m.Corner switch { "topLeft" => 0, "topRight" => 1, "bottomRight" => 3, _ => 2 };
         CardVertical.IsOn = m.Vertical;
+        FollowOn.IsOn = m.Follow;
+        bool autoKey = _host.InstalledPlugins().Any(p => p.Name.Equals("Muze Auto Key", StringComparison.OrdinalIgnoreCase));
+        FollowOn.IsEnabled = autoKey || !_host.IsRunning;
+        if (!_followHooked)
+        {
+            _followHooked = true;
+            OmniCast.Services.MusicSync.Current.Changed += UpdateFollowStatus;
+        }
+        UpdateFollowStatus();
         if (!_musicHooked)
         {
             _musicHooked = true;
@@ -326,7 +335,28 @@ public sealed partial class SettingsPage : Page
         UpdateMusicStatus();
     }
 
-    private bool _musicHooked;
+    private bool _musicHooked, _followHooked;
+
+    private void UpdateFollowStatus()
+    {
+        var sync = OmniCast.Services.MusicSync.Current;
+        bool installed = !_host.IsRunning || FollowOn.IsEnabled;
+        FollowTitle.Text = $"Muze follows {(_host.Settings.Music.Source == "untitled" ? "[untitled]" : "Spotify")}'s key and tempo";
+        FollowStatus.Text = installed ? sync.Status : "Needs Muze Auto Key installed";
+        if (sync.Locked && Application.Current.Resources.TryGetValue("SystemFillColorSuccessBrush", out var good) && good is Microsoft.UI.Xaml.Media.Brush b)
+            FollowStatus.Foreground = b;
+        else
+            FollowStatus.ClearValue(TextBlock.ForegroundProperty);
+    }
+
+    private void Follow_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _host.Settings.Music.Follow = FollowOn.IsOn;
+        _host.Settings.Save();
+        OmniCast.Services.MusicSync.Current.Apply();
+        UpdateFollowStatus();
+    }
 
     private void UpdateMusicStatus()
     {
@@ -346,6 +376,8 @@ public sealed partial class SettingsPage : Page
         {
             _host.SelectMusicApp(source);
             OmniCast.Overlays.NowPlayingCard.Current.SourceChanged();
+            OmniCast.Services.MusicSync.Current.SongChanged();
+            UpdateFollowStatus();
         }
         _host.Settings.Save();
         OmniCast.Overlays.NowPlayingCard.Current.SettingsChanged();

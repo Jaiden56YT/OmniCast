@@ -199,6 +199,21 @@ OC_API void oc_mic_plugin_set_state(int32_t slot, const char *state);
 OC_API void oc_mic_plugin_bypass(int32_t slot, int32_t bypass);
 
 // ---------------------------------------------------------------------------
+// Muze follows the music
+//
+// oc_music_follow puts Muze Auto Key (when it's installed) on a channel, the
+// music app's, and tracks that channel's beat; -1 stops. Auto Key hands its
+// key to Muze itself (Muze's Key Link: Follow). The app reads the tempo every
+// couple of seconds and passes a settled value to oc_music_set_tempo, which
+// is the tempo every mic plugin sees (40-300 BPM; 120 until then).
+
+OC_API int32_t oc_music_follow(int32_t channel); // 1 with Muze Auto Key, 0 tempo only
+OC_API void oc_music_tempo_reset(void);           // a new song started
+OC_API double oc_music_tempo(double *confidence); // BPM, 0 = not sure yet
+OC_API void oc_music_set_tempo(double bpm);
+OC_API int32_t oc_music_muze_key(char *out, int32_t len);
+
+// ---------------------------------------------------------------------------
 // Discord outputs
 //
 // Plays a mix into a virtual audio cable (VB-CABLE or Voicemeeter) so Discord

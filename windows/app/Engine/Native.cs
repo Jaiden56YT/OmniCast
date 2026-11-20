@@ -148,6 +148,13 @@ public static class Native
     [DllImport(Dll)] public static extern void oc_mic_plugin_set_state(int slot, [MarshalAs(UnmanagedType.LPUTF8Str)] string state);
     [DllImport(Dll)] public static extern void oc_mic_plugin_bypass(int slot, int bypass);
 
+    // Muze follows the music
+    [DllImport(Dll)] public static extern int oc_music_follow(int channel);
+    [DllImport(Dll)] public static extern void oc_music_tempo_reset();
+    [DllImport(Dll)] public static extern double oc_music_tempo(out double confidence);
+    [DllImport(Dll)] public static extern void oc_music_set_tempo(double bpm);
+    [DllImport(Dll)] public static extern int oc_music_muze_key(byte[] buf, int len);
+
     // Overlay layers
     [DllImport(Dll)] public static extern int oc_layer_set_image([MarshalAs(UnmanagedType.LPUTF8Str)] string key, [MarshalAs(UnmanagedType.LPUTF8Str)] string path);
     [DllImport(Dll)] public static extern void oc_layer_place([MarshalAs(UnmanagedType.LPUTF8Str)] string key, int canvas, int show, float x, float y, float w, float h);

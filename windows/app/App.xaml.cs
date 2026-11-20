@@ -49,6 +49,7 @@ public partial class App : Application
         Overlays.ChatOverlay.Current.Start();
         Overlays.NowPlayingCard.Current.Start();
         Overlays.CallOverlay.Current.Start();
+        Services.MusicSync.Current.Start();
         OmniCast.Chat.ChatHub.Current.Restart();
         await host.StartAsync();
         OmniCast.Discord.DiscordCall.Current.Resume();

@@ -78,6 +78,11 @@ void audio_detach_all()
 		audio_attach(i, nullptr);
 }
 
+obs_source_t *audio_channel_source(int channel)
+{
+	return channel >= 0 && channel < OC_CH_COUNT ? channels[channel].source : nullptr;
+}
+
 } // namespace oc
 
 using namespace oc;
