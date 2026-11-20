@@ -166,6 +166,256 @@
                           SelectionChanged="Discord_Changed" AutomationProperties.Name="Stream audio output" />
             </Grid>
 
+            <!-- Chat -->
+            <TextBlock Text="Chat" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="YouTube handle" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="YouTubeStatus" Style="{StaticResource RowDescription}" Text="Off" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBox x:Name="YouTubeName" Width="200" PlaceholderText="yourhandle" AutomationProperties.Name="YouTube handle" />
+                    <ToggleSwitch x:Name="YouTubeOn" OnContent="" OffContent="" MinWidth="0" AutomationProperties.Name="Read YouTube handle" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Twitch channel" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="TwitchStatus" Style="{StaticResource RowDescription}" Text="Off" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBox x:Name="TwitchName" Width="200" PlaceholderText="yourchannel" AutomationProperties.Name="Twitch channel" />
+                    <ToggleSwitch x:Name="TwitchOn" OnContent="" OffContent="" MinWidth="0" AutomationProperties.Name="Read Twitch channel" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Kick channel" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="KickStatus" Style="{StaticResource RowDescription}" Text="Off" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBox x:Name="KickName" Width="200" PlaceholderText="yourchannel" AutomationProperties.Name="Kick channel" />
+                    <ToggleSwitch x:Name="KickOn" OnContent="" OffContent="" MinWidth="0" AutomationProperties.Name="Read Kick channel" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Read only" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="ChatSummary" Style="{StaticResource RowDescription}" Text="Chat is read only: nothing is ever posted. YouTube connects once you go live. Instagram doesn't let apps read live chat." />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Add test messages" Click="ChatTest_Click" />
+                    <Button Content="Clear" Click="ChatClear_Click" />
+                    <Button Content="Save and reconnect" Style="{StaticResource AccentButtonStyle}" Click="ChatSave_Click" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Show chat" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="The merged chat on the 16:9 canvas." />
+                </StackPanel>
+                <ToggleSwitch x:Name="ChatVisible" Grid.Column="1" Toggled="ChatLook_Changed" AutomationProperties.Name="Show chat" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Also on 9:16" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="Puts the chat on the vertical canvas too." />
+                </StackPanel>
+                <ToggleSwitch x:Name="ChatVertical" Grid.Column="1" Toggled="ChatLook_Changed" AutomationProperties.Name="Show chat on 9:16" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Text size" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="" />
+                </StackPanel>
+                <ComboBox x:Name="ChatSize" Grid.Column="1" MinWidth="160" VerticalAlignment="Center" SelectionChanged="ChatLook_Changed" AutomationProperties.Name="Chat text size">
+                    <ComboBoxItem Content="Small" Tag="small" /><ComboBoxItem Content="Medium" Tag="medium" /><ComboBoxItem Content="Large" Tag="large" />
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Hide lines after" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="" />
+                </StackPanel>
+                <ComboBox x:Name="ChatHide" Grid.Column="1" MinWidth="160" VerticalAlignment="Center" SelectionChanged="ChatLook_Changed" AutomationProperties.Name="Hide chat lines after">
+                    <ComboBoxItem Content="Never" Tag="0" /><ComboBoxItem Content="30 seconds" Tag="30" /><ComboBoxItem Content="1 minute" Tag="60" /><ComboBoxItem Content="2 minutes" Tag="120" />
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Kick chatroom ID (optional)" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="Only needed if Kick blocks the channel lookup." />
+                </StackPanel>
+                <TextBox x:Name="KickRoom" Grid.Column="1" Width="200" VerticalAlignment="Center" PlaceholderText="e.g. 668" AutomationProperties.Name="Kick chatroom ID" />
+            </Grid>
+
+            <!-- Music -->
+            <TextBlock Text="Music" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Music on stream" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="Which app's music is on stream. The other is muted on stream (when it has its own channel). [untitled] has no Windows app, so it means your browser." />
+                    <TextBlock x:Name="MusicStatus" Style="{StaticResource RowDescription}" />
+                </StackPanel>
+                <ComboBox x:Name="MusicSource" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Music_Changed" AutomationProperties.Name="Music on stream">
+                    <ComboBoxItem Content="Spotify" Tag="spotify" /><ComboBoxItem Content="[untitled] in a browser" Tag="untitled" />
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Now-playing card" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="Shows for 30 seconds when a song starts." />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Preview card" Click="MusicPreview_Click" />
+                    <ToggleSwitch x:Name="CardOn" Toggled="Music_Changed" AutomationProperties.Name="Show the now-playing card" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Card corner" Style="{StaticResource RowTitle}" VerticalAlignment="Center" />
+                <ComboBox x:Name="CardCorner" Grid.Column="1" MinWidth="200" VerticalAlignment="Center" SelectionChanged="Music_Changed" AutomationProperties.Name="Card corner">
+                    <ComboBoxItem Content="Top left" Tag="topLeft" /><ComboBoxItem Content="Top right" Tag="topRight" />
+                    <ComboBoxItem Content="Bottom left" Tag="bottomLeft" /><ComboBoxItem Content="Bottom right" Tag="bottomRight" />
+                </ComboBox>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock Text="Card also on 9:16" Style="{StaticResource RowTitle}" VerticalAlignment="Center" />
+                <ToggleSwitch x:Name="CardVertical" Grid.Column="1" Toggled="Music_Changed" AutomationProperties.Name="Card also on 9:16" />
+            </Grid>
+
+            <!-- Discord call overlay -->
+            <TextBlock Text="Discord call on stream" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Set up once" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="Discord only shares who&apos;s in your call with an app you register yourself. It&apos;s free and takes a minute: 1. Open the Developer Portal and click New Application. 2. Under OAuth2, add the redirect http://localhost and save. 3. Copy the Client ID and Client Secret below. 4. Click Connect, then Authorize in the window Discord shows." TextWrapping="Wrap" />
+                </StackPanel>
+                <HyperlinkButton Grid.Column="1" Content="Open the Developer Portal" NavigateUri="https://discord.com/developers/applications" VerticalAlignment="Center" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Client ID and Secret" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="CallStatus" Style="{StaticResource RowDescription}" Text="Not connected" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                    <TextBox x:Name="CallClientId" Width="260" PlaceholderText="Client ID" AutomationProperties.Name="Discord Client ID" />
+                    <PasswordBox x:Name="CallSecret" Width="260" PlaceholderText="Client Secret" AutomationProperties.Name="Discord Client Secret" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="CallConnect" Content="Connect" Style="{StaticResource AccentButtonStyle}" Click="CallConnect_Click" />
+                        <Button Content="Sign out" Click="CallSignOut_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Show the call&apos;s people" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="Their Discord pictures along the top of the 16:9 canvas, with a green ring while they talk. The secret and Discord&apos;s sign-in token are kept in Windows Credential Manager." TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Arrange in a row" Click="CallArrange_Click" />
+                    <ToggleSwitch x:Name="CallVisible" Toggled="Call_Changed" AutomationProperties.Name="Show the call&apos;s people" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Dim people who aren&apos;t talking" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="" TextWrapping="Wrap" />
+                </StackPanel>
+                <ToggleSwitch x:Name="CallDim" Grid.Column="1" Toggled="Call_Changed" AutomationProperties.Name="Dim people who aren&apos;t talking" />
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Your PNGtuber" Style="{StaticResource RowTitle}" />
+                    <TextBlock x:Name="MeStatus" Style="{StaticResource RowDescription}" Text="Pick idle and talking images. It talks when your mic does." TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button Content="Idle image…" Click="MeIdle_Click" />
+                    <Button Content="Talking image…" Click="MeTalk_Click" />
+                    <ToggleSwitch x:Name="MeOn" Toggled="Call_Changed" AutomationProperties.Name="Show your PNGtuber" />
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Mic sensitivity" Style="{StaticResource RowTitle}" />
+                    <TextBlock  Style="{StaticResource RowDescription}" Text="How loud your mic has to be for your PNGtuber to talk." TextWrapping="Wrap" />
+                </StackPanel>
+                <ComboBox x:Name="MeSensitivity" Grid.Column="1" MinWidth="160" VerticalAlignment="Center" SelectionChanged="Call_Changed" AutomationProperties.Name="Mic sensitivity">
+                    <ComboBoxItem Content="High" Tag="-50" /><ComboBoxItem Content="Medium" Tag="-40" /><ComboBoxItem Content="Low" Tag="-30" />
+                </ComboBox>
+            </Grid>
+
+            <!-- Accounts (stream info) -->
+            <TextBlock Text="Accounts (stream titles and games)" Style="{StaticResource SectionHeaderStyle}" />
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="Twitch" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="1. dev.twitch.tv/console/apps › Register Your Application. 2. OAuth Redirect URL: http://localhost:39651. Category: Broadcaster Suite. Client Type: Public. 3. Copy the Client ID here, then Connect and enter the code Twitch shows." TextWrapping="Wrap" />
+                    <HyperlinkButton Content="Open the Twitch developer console" NavigateUri="https://dev.twitch.tv/console/apps" Padding="0" />
+                    <TextBlock x:Name="AccTwitchStatus" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                    <TextBox x:Name="AccTwitchId" Width="260" PlaceholderText="Client ID" AutomationProperties.Name="Twitch Client ID" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="AccTwitchConnect" Content="Connect" Style="{StaticResource AccentButtonStyle}" Tag="twitch" Click="AccountConnect_Click" />
+                        <Button x:Name="AccTwitchSignOut" Content="Sign out" Tag="twitch" Click="AccountSignOut_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="Kick" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="1. kick.com › Settings › Developer › Create app. 2. Redirect URL: http://localhost:39651/callback. Scopes: read user, read channel, write channel. 3. Copy the Client ID and Client Secret here, then Connect and allow access." TextWrapping="Wrap" />
+                    <HyperlinkButton Content="Open Kick&apos;s developer settings" NavigateUri="https://kick.com/settings/developer" Padding="0" />
+                    <TextBlock x:Name="AccKickStatus" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                    <TextBox x:Name="AccKickId" Width="260" PlaceholderText="Client ID" AutomationProperties.Name="Kick Client ID" />
+                    <PasswordBox x:Name="AccKickSecret" Width="260" PlaceholderText="Client Secret" AutomationProperties.Name="Kick Client Secret" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="AccKickConnect" Content="Connect" Style="{StaticResource AccentButtonStyle}" Tag="kick" Click="AccountConnect_Click" />
+                        <Button x:Name="AccKickSignOut" Content="Sign out" Tag="kick" Click="AccountSignOut_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+            <Grid Style="{StaticResource RowStyle}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock Text="YouTube" Style="{StaticResource RowTitle}" />
+                    <TextBlock Style="{StaticResource RowDescription}" Text="1. console.cloud.google.com › new project › enable YouTube Data API v3. 2. OAuth consent screen: External, add your Google account as a test user. 3. Credentials › Create OAuth client ID › Desktop app. Copy the ID and secret here, then Connect. While the Google app is in testing, Google signs it out after 7 days; just Connect again. Secrets and sign-ins are kept in Windows Credential Manager." TextWrapping="Wrap" />
+                    <HyperlinkButton Content="Open the Google Cloud console" NavigateUri="https://console.cloud.google.com/apis/library/youtube.googleapis.com" Padding="0" />
+                    <TextBlock x:Name="AccYouTubeStatus" Style="{StaticResource RowDescription}" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                    <TextBox x:Name="AccYouTubeId" Width="260" PlaceholderText="Client ID" AutomationProperties.Name="YouTube Client ID" />
+                    <PasswordBox x:Name="AccYouTubeSecret" Width="260" PlaceholderText="Client Secret" AutomationProperties.Name="YouTube Client Secret" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="AccYouTubeConnect" Content="Connect" Style="{StaticResource AccentButtonStyle}" Tag="youtube" Click="AccountConnect_Click" />
+                        <Button x:Name="AccYouTubeSignOut" Content="Sign out" Tag="youtube" Click="AccountSignOut_Click" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+
             <!-- App -->
             <TextBlock Text="App" Style="{StaticResource SectionHeaderStyle}" />
             <Grid Style="{StaticResource RowStyle}">

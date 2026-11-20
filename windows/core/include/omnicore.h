@@ -153,16 +153,50 @@ OC_API const char *oc_scene_active(void);
 // Audio
 //
 // Channels: 0 = mic, 1 = desktop audio, 2 = capture card (the on-air scene's
-// screen slot, when it's a capture device).
+// screen slot, when it's a capture device), 3-15 = apps with their own channel.
+//
+// Desktop audio on the default output is "everything except OmniCast and the
+// apps with their own channel". Each channel has a Stream level (the stream
+// and recordings) and a separate Monitor level (the headphones mix).
 
-enum { OC_CH_MIC = 0, OC_CH_DESKTOP = 1, OC_CH_CAPTURE = 2, OC_CH_COUNT = 3 };
+enum { OC_CH_MIC = 0, OC_CH_DESKTOP = 1, OC_CH_CAPTURE = 2, OC_CH_APP_FIRST = 3, OC_CH_COUNT = 16 };
 
-// Linear gain, 1.0 = unity.
+// Stream level. Linear gain, 1.0 = unity.
 OC_API void oc_audio_set(int32_t channel, float gain, int32_t muted);
-// Peak dBFS per side since the last call (-INF when silent). Lock-free.
+// Peak dBFS per side since the last call (-INF when silent), before either level. Lock-free.
 OC_API void oc_audio_levels(int32_t channel, float *left_db, float *right_db);
+// The loudest side of the latest packet, dBFS, without resetting (for voice detection).
+OC_API float oc_audio_level(int32_t channel);
 // 1 when the channel has a source right now (the capture card only does while picked).
 OC_API int32_t oc_audio_present(int32_t channel);
+
+// Per-app channels (Windows 10 2004+): every process tree of exe ("spotify.exe"),
+// from oc_list("audio_apps"). Returns the channel, or -1 (unsupported, or all
+// 13 app channels used). The app keeps playing through the speakers as usual.
+OC_API int32_t oc_app_audio_supported(void);
+OC_API int32_t oc_app_channel_add(const char *exe);
+OC_API void oc_app_channel_remove(int32_t channel);
+
+// Monitor (headphones) mix: Monitor level per channel, and where it plays
+// ("" = follow the Windows default output; a device id from "audio_outputs").
+OC_API void oc_monitor_set(int32_t channel, float gain, int32_t muted);
+OC_API void oc_monitor_set_device(const char *id);
+OC_API int32_t oc_monitor_running(void);
+
+// ---------------------------------------------------------------------------
+// Mic plugins (VST3)
+//
+// Up to 4 VST3 effects on the mic, in slot order, after its input and before
+// its level (so the stream, recordings, the monitor mix and the Discord voice
+// output all get them). path is a .vst3 from oc_list("vst3") (the installed
+// ones, in Common Files\VST3); "" removes the slot. A plugin is loaded only
+// while it's in a slot. State is base64 (free with oc_free).
+
+OC_API int32_t oc_mic_plugin_set(int32_t slot, const char *path, char *err, int32_t err_len);
+OC_API void oc_mic_plugin_open_editor(int32_t slot);
+OC_API char *oc_mic_plugin_get_state(int32_t slot);
+OC_API void oc_mic_plugin_set_state(int32_t slot, const char *state);
+OC_API void oc_mic_plugin_bypass(int32_t slot, int32_t bypass);
 
 // ---------------------------------------------------------------------------
 // Discord outputs
@@ -173,13 +207,41 @@ OC_API int32_t oc_audio_present(int32_t channel);
 
 enum oc_discord_output {
 	OC_DISCORD_VOICE = 0,   // the mic, after its level and mute
-	OC_DISCORD_GO_LIVE = 1, // desktop audio and the capture card, without the mic
+	OC_DISCORD_GO_LIVE = 1, // desktop audio, apps and the capture card, without the mic or Discord itself
 };
 
 // device_id "" turns the output off. One device can't feed both outputs: giving
 // it to one takes it from the other. Returns 1 when the device is playing.
 OC_API int32_t oc_discord_output_set(int32_t output, const char *device_id);
 OC_API int32_t oc_discord_output_running(int32_t output);
+
+// ---------------------------------------------------------------------------
+// Overlay layers
+//
+// Pre-rendered PNGs (chat, now playing, the Discord call, your PNGtuber) on top
+// of whatever scene is on air, unaffected by scene transitions. A layer starts
+// hidden (opacity 0). oc_layer_set_image re-reads the file each call, so write
+// the new image to a temp file and rename it over the old one first. x, y, w, h
+// are in canvas pixels; the image is fitted inside that box. Later layers are
+// drawn on top.
+
+OC_API int32_t oc_layer_set_image(const char *key, const char *png_path);
+OC_API void oc_layer_place(const char *key, int32_t canvas, int32_t show, float x, float y, float w, float h);
+OC_API void oc_layer_set_opacity(const char *key, float opacity);
+OC_API void oc_layer_remove(const char *key);
+
+// ---------------------------------------------------------------------------
+// Virtual camera
+//
+// OBS's Windows virtual camera (apps see "OBS Virtual Camera"), fed from one
+// canvas. The camera filter needs registering once with admin rights:
+// oc_vcam_install shows the UAC prompt. OBS Studio's own registration works too.
+
+OC_API int32_t oc_vcam_installed(void);
+OC_API int32_t oc_vcam_install(void); // returns 1 when installed afterwards
+OC_API int32_t oc_vcam_start(int32_t canvas, char *err, int32_t err_len);
+OC_API void oc_vcam_stop(void);
+OC_API int32_t oc_vcam_active(void);
 
 // ---------------------------------------------------------------------------
 // Preview

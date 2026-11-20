@@ -14,6 +14,7 @@ struct Channel {
 	obs_source_t *source = nullptr; // not owned
 	obs_volmeter_t *meter = nullptr;
 	std::atomic<float> peak[2];
+	std::atomic<float> last{-std::numeric_limits<float>::infinity()}; // loudest side of the latest packet
 	float gain = 1.0f;
 	bool muted = false;
 };
@@ -36,6 +37,7 @@ static void on_levels(void *param, const float magnitude[MAX_AUDIO_CHANNELS], co
 	Channel *ch = (Channel *)param;
 	store_max(ch->peak[0], peak[0]);
 	store_max(ch->peak[1], peak[1]);
+	ch->last.store(peak[0] > peak[1] ? peak[0] : peak[1], std::memory_order_relaxed);
 }
 
 static void apply(Channel &ch)
@@ -57,6 +59,7 @@ void audio_attach(int channel, obs_source_t *source)
 		ch.meter = nullptr;
 	}
 	ch.source = source;
+	monitor_attach(channel, source);
 	ch.peak[0] = SILENT;
 	ch.peak[1] = SILENT;
 	if (!source)
@@ -105,4 +108,9 @@ OC_API void oc_audio_levels(int32_t channel, float *left_db, float *right_db)
 OC_API int32_t oc_audio_present(int32_t channel)
 {
 	return channel >= 0 && channel < OC_CH_COUNT && channels[channel].source ? 1 : 0;
+}
+
+OC_API float oc_audio_level(int32_t channel)
+{
+	return channel >= 0 && channel < OC_CH_COUNT ? channels[channel].last.load(std::memory_order_relaxed) : SILENT;
 }

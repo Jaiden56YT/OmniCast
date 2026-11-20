@@ -1,9 +1,10 @@
-# Gets libobs for OmniCast for Windows. Run by build.ps1; safe to run again.
+# Gets libobs and the VST3 interfaces for OmniCast for Windows. Run by
+# build.ps1; safe to run again.
 #
-# Downloads two official OBS Studio 32.0.4 files from GitHub (checked against
-# their SHA-256), once, into windows/vendor/downloads:
-#   - the Windows x64 zip: obs.dll and the plugins OmniCast uses (the runtime)
-#   - the source tarball: the libobs headers OmniCore compiles against
+# Downloads, once, into windows/vendor/downloads (each checked against its SHA-256):
+#   - OBS Studio 32.0.4's Windows x64 zip: obs.dll and the plugins OmniCast uses
+#   - OBS Studio 32.0.4's source tarball: the libobs headers OmniCore compiles against
+#   - Steinberg's VST3 plug-in interfaces 3.8.1 (MIT): headers for hosting mic plugins
 # OBS Studio doesn't need to be installed.
 #
 #   -Refresh   extract again even if vendor/ is already set up
@@ -22,6 +23,13 @@ $Files = @{
         Name   = "OBS-Studio-$ObsVersion-Sources.tar.gz"
         Sha256 = 'd9e62ea24305fbfe14c69a6422de1525fe84da232df2cc0d7e4601a840bdbba8'
     }
+}
+
+$Vst3Tag = 'v3.8.1_build_84'
+$Vst3 = @{
+    Name   = "vst3_pluginterfaces-$Vst3Tag.tar.gz"
+    Url    = "https://codeload.github.com/steinbergmedia/vst3_pluginterfaces/tar.gz/refs/tags/$Vst3Tag"
+    Sha256 = '19e88e225b6ecb4a3c429d3ff2fd511be9c6c8b8b1c7e86b05949b45c0553e2d'
 }
 
 # The OBS plugins OmniCast loads. Everything else in the zip is left out.
@@ -55,7 +63,7 @@ function Get-Pinned($file) {
         Write-Host "  $($file.Name) doesn't match its checksum; downloading it again"
         Remove-Item $path
     }
-    $url = "https://github.com/obsproject/obs-studio/releases/download/$ObsVersion/$($file.Name)"
+    $url = if ($file.Url) { $file.Url } else { "https://github.com/obsproject/obs-studio/releases/download/$ObsVersion/$($file.Name)" }
     Write-Host "  downloading $url"
     $tmp = "$path.part"
     Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
@@ -66,6 +74,25 @@ function Get-Pinned($file) {
     }
     Move-Item $tmp $path
     return $path
+}
+
+# VST3 interfaces -> vendor/vst3/pluginterfaces (headers and the few .cpp
+# files that define the interface ids).
+$Vst3Dir = Join-Path $Vendor 'vst3'
+$Vst3Stamp = Join-Path $Vendor ".vst3-$Vst3Tag.stamp"
+if ($Refresh -or -not (Test-Path $Vst3Stamp)) {
+    Write-Host "Getting the VST3 interfaces $Vst3Tag"
+    $tgz = Get-Pinned $Vst3
+    Remove-Item -Recurse -Force $Vst3Dir -ErrorAction SilentlyContinue
+    $tmpV = Join-Path $Vendor 'vst3-tmp'
+    Remove-Item -Recurse -Force $tmpV -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $tmpV | Out-Null
+    & "$env:SystemRoot\System32\tar.exe" -xzf $tgz -C $tmpV
+    if ($LASTEXITCODE) { throw 'Could not extract the VST3 interfaces' }
+    New-Item -ItemType Directory -Force $Vst3Dir | Out-Null
+    Move-Item (Get-ChildItem $tmpV -Directory | Select-Object -First 1).FullName (Join-Path $Vst3Dir 'pluginterfaces')
+    Remove-Item -Recurse -Force $tmpV
+    Set-Content -Encoding ascii $Vst3Stamp $Vst3Tag
 }
 
 $want = ($Plugins -join ',')

@@ -53,10 +53,113 @@ public sealed class SceneInfo
     };
 }
 
-public sealed class ChannelInfo
+public class ChannelInfo
 {
-    public double Volume { get; set; } = 1.0; // linear, 1 = unity
-    public bool Muted { get; set; }
+    public double Volume { get; set; } = 1.0; // Stream level, linear, 1 = unity
+    public bool Muted { get; set; }           // muted on stream and recordings
+    public double Monitor { get; set; } = 1.0; // Monitor (headphones) level
+    public bool MonitorMuted { get; set; }
+}
+
+// Merged chat overlay. Read-only: nothing is ever posted.
+public sealed class ChatSettings
+{
+    public string YouTube { get; set; } = "";  // handle
+    public string Twitch { get; set; } = "";   // channel
+    public string Kick { get; set; } = "";     // channel
+    public long? KickChatroom { get; set; }    // only when Kick blocks the channel lookup
+    public List<string> Enabled { get; set; } = new() { "youtube", "twitch", "kick" };
+    public bool Visible { get; set; } = true;
+    public bool Vertical { get; set; }         // also on 9:16
+    public string Size { get; set; } = "medium"; // small, medium, large
+    public int HideAfter { get; set; }         // seconds; 0 = never
+    public Box? WideBox { get; set; }          // null = default place
+    public Box? TallBox { get; set; }
+}
+
+// A VST3 effect on the mic (STACKS, Muze, ...), in chain order.
+public sealed class MicPlugin
+{
+    public string Path { get; set; } = "";
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+    public string State { get; set; } = ""; // the plugin's own settings, base64
+}
+
+// Stream-info sign-ins: the Client IDs of the apps the user registered, and who
+// signed in. Secrets and tokens are in Windows Credential Manager.
+public sealed class AccountsSettings
+{
+    public Dictionary<string, string> ClientIds { get; set; } = new(); // by platform key
+    public Dictionary<string, string> Logins { get; set; } = new();
+    public string TwitchUserId { get; set; } = "";
+}
+
+public sealed class SavedCategory
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Image { get; set; } = "";
+}
+
+// The last title and games set from Stream info.
+public sealed class StreamInfoSettings
+{
+    public string Title { get; set; } = "";
+    public List<string> TitleOn { get; set; } = new() { "youtube", "twitch", "kick" };
+    public SavedCategory? TwitchGame { get; set; }
+    public SavedCategory? KickGame { get; set; }
+}
+
+// The music switch and the now-playing card.
+public sealed class MusicSettings
+{
+    public string Source { get; set; } = "spotify"; // spotify, untitled (in a browser)
+    public bool CardEnabled { get; set; } = true;
+    public string Corner { get; set; } = "bottomLeft"; // topLeft, topRight, bottomLeft, bottomRight
+    public bool Vertical { get; set; } = true;          // also on 9:16
+}
+
+// The Discord call overlay and your PNGtuber. The Client Secret and Discord's
+// sign-in token are in Windows Credential Manager, not here.
+public sealed class DiscordSettings
+{
+    public string ClientId { get; set; } = "";
+    public bool AutoConnect { get; set; }
+    public bool Visible { get; set; } = true;   // the call's people
+    public bool DimQuiet { get; set; } = true;  // dim people who aren't talking
+    public Dictionary<string, PersonLayout> Layouts { get; set; } = new(); // by Discord user id, and "me"
+    public bool MeEnabled { get; set; } = true;
+    public string MeIdle { get; set; } = "";    // your PNGtuber images
+    public string MeTalk { get; set; } = "";
+    public double MeThreshold { get; set; } = -40; // dBFS: High -50, Medium -40, Low -30
+}
+
+// Where a person is drawn on the 16:9 canvas (1920x1080 reference pixels):
+// X, Y are the centre, Size the height.
+public sealed class PersonLayout
+{
+    public double X { get; set; } = 960;
+    public double Y { get; set; } = 140;
+    public double Size { get; set; } = 220;
+    public bool Flip { get; set; }
+}
+
+// A rectangle in canvas pixels (top-left origin).
+public sealed class Box
+{
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double W { get; set; }
+    public double H { get; set; }
+}
+
+// An app with its own mixer channel, found by its exe ("spotify.exe").
+public sealed class AppChannelInfo : ChannelInfo
+{
+    public string Exe { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = ""; // for its icon; may be gone
 }
 
 // Everything OmniCast remembers, in %LOCALAPPDATA%\OmniCast\settings.json.
@@ -99,7 +202,20 @@ public sealed class AppSettings
     // Virtual-cable device ids for the Discord outputs ("" = off).
     public string DiscordVoiceDevice { get; set; } = "";
     public string DiscordStreamAudioDevice { get; set; } = "";
+
+    // Which canvas the virtual camera shows: 0 = 16:9, 1 = 9:16.
+    public int VirtualCameraCanvas { get; set; }
     public ChannelInfo[] Channels { get; set; } = { new(), new(), new() };
+    public List<AppChannelInfo> AppChannels { get; set; } = new();
+    public string MonitorDevice { get; set; } = ""; // "" = Windows' default output
+    public bool AddedSpotify { get; set; }          // Spotify gets a channel once, automatically
+    public int MixerVersion { get; set; }
+    public ChatSettings Chat { get; set; } = new();
+    public MusicSettings Music { get; set; } = new();
+    public List<MicPlugin> MicPlugins { get; set; } = new();
+    public AccountsSettings Accounts { get; set; } = new();
+    public StreamInfoSettings StreamInfo { get; set; } = new();
+    public DiscordSettings Discord { get; set; } = new();
 
     // App
     public bool LivePreview { get; set; } = true;
@@ -153,6 +269,27 @@ public sealed class AppSettings
         RecordQuality = Math.Clamp(RecordQuality, 1, 51);
         if (Channels == null || Channels.Length < 3)
             Channels = new ChannelInfo[] { new(), new(), new() };
+        AppChannels ??= new();
+        Chat ??= new();
+        Music ??= new();
+        MicPlugins ??= new();
+        Accounts ??= new();
+        Accounts.ClientIds ??= new();
+        Accounts.Logins ??= new();
+        StreamInfo ??= new();
+        StreamInfo.TitleOn ??= new();
+        Discord ??= new();
+        Discord.Layouts ??= new();
+        Chat.Enabled ??= new();
+        if (MixerVersion < 1)
+        {
+            // You already hear your desktop through the speakers, and most people
+            // don't want to hear themselves: both start off in the monitor mix.
+            // The capture card starts on (the point is to hear the game).
+            Channels[0].MonitorMuted = true;
+            Channels[1].MonitorMuted = true;
+            MixerVersion = 1;
+        }
         Destinations ??= new();
         TransitionMs = Math.Clamp(TransitionMs, 50, 5000);
         Scenes ??= new();

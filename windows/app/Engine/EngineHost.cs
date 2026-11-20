@@ -13,6 +13,7 @@ using OmniCast.Services;
 namespace OmniCast.Engine;
 
 public sealed record DeviceItem(string Id, string Name);
+public sealed record AppItem(string Exe, string Name, string Path);
 
 public sealed class DestinationStatus
 {
@@ -62,6 +63,8 @@ public sealed class EngineHost : INotifyPropertyChanged
     public bool IsLive { get => _live; private set { if (Set(ref _live, value)) UpdateBusy(); } }
     public bool IsRecording { get => _recordingAny; private set { if (Set(ref _recordingAny, value)) UpdateBusy(); } }
     public bool IsBusy => IsLive || IsRecording;
+    public bool IsVirtualCameraOn { get => _vcamOn; private set => Set(ref _vcamOn, value); }
+    private bool _vcamOn;
     public bool IsMicMuted { get => _micMuted; private set => Set(ref _micMuted, value); }
     public string StartError { get => _startError; private set => Set(ref _startError, value); }
     public string EncoderName { get => _encoderName; private set => Set(ref _encoderName, value); }
@@ -108,6 +111,9 @@ public sealed class EngineHost : INotifyPropertyChanged
         GpuName = Native.Str(Native.oc_gpu_name());
         ApplySources();
         IsRunning = true;
+        // The camera stays on across a video settings change.
+        if (IsVirtualCameraOn && StartVirtualCamera() != null)
+            IsVirtualCameraOn = false;
         EngineStarted?.Invoke();
     }
 
@@ -118,8 +124,11 @@ public sealed class EngineHost : INotifyPropertyChanged
         EngineStopping?.Invoke();
         Native.oc_set_status_callback(null);
         Native.oc_set_record_callback(null);
+        SaveMicPluginStates();
         Native.oc_shutdown();
+        _apps.Clear();
         IsRunning = false;
+        IsVirtualCameraOn = false;
         IsLive = false;
         IsRecording = false;
         Native.oc_set_busy(0);
@@ -138,6 +147,7 @@ public sealed class EngineHost : INotifyPropertyChanged
         var video = VideoConfig();
         var err = new byte[512];
         IsStarting = true;
+        SaveMicPluginStates();
         int ok = await Task.Run(() => Native.oc_reset_video(ref video, err, err.Length));
         IsStarting = false;
         if (ok == 0)
@@ -175,6 +185,8 @@ public sealed class EngineHost : INotifyPropertyChanged
         Native.oc_scene_activate(ActiveScene.Id, (int)TransitionKind.Cut, 0);
         for (int ch = 0; ch < 3; ch++)
             ApplyChannel(ch);
+        ApplyMixer();
+        ApplyMicPlugins();
         // Saved Discord outputs; a cable that's gone (uninstalled) just stays off.
         Native.oc_discord_output_set(Native.DiscordVoice, s.DiscordVoiceDevice);
         Native.oc_discord_output_set(Native.DiscordStreamAudio, s.DiscordStreamAudioDevice);
@@ -197,7 +209,40 @@ public sealed class EngineHost : INotifyPropertyChanged
                 Settings.DiscordVoiceDevice = "";
         }
         Settings.Save();
+        if (output == Native.DiscordStreamAudio && deviceId.Length > 0 && IsRunning)
+            AddDiscordIfRunning();
         return IsRunning && Native.oc_discord_output_set(output, deviceId) != 0;
+    }
+
+    // ---------------------------------------------------------------- virtual camera
+
+    public static bool VirtualCameraInstalled => Native.oc_vcam_installed() != 0;
+
+    // Shows the UAC prompt to register the camera; true when it's ready.
+    public static Task<bool> InstallVirtualCameraAsync() => Task.Run(() => Native.oc_vcam_install() != 0);
+
+    // Starts (or moves) the camera onto the chosen canvas; returns an error or null.
+    public string? StartVirtualCamera()
+    {
+        var err = new byte[256];
+        if (Native.oc_vcam_start(Settings.VirtualCameraCanvas, err, err.Length) == 0)
+            return Native.Err(err);
+        IsVirtualCameraOn = true;
+        return null;
+    }
+
+    public void StopVirtualCamera()
+    {
+        Native.oc_vcam_stop();
+        IsVirtualCameraOn = false;
+    }
+
+    public void SetVirtualCameraCanvas(int canvas)
+    {
+        Settings.VirtualCameraCanvas = canvas;
+        Settings.Save();
+        if (IsVirtualCameraOn && StartVirtualCamera() != null)
+            IsVirtualCameraOn = false;
     }
 
     public bool DiscordOutputRunning(int output) => IsRunning && Native.oc_discord_output_running(output) != 0;
@@ -205,9 +250,225 @@ public sealed class EngineHost : INotifyPropertyChanged
     private static void PushScene(SceneInfo s) =>
         Native.SceneSet(s.Id, (int)s.ScreenKind, s.ScreenId, s.CameraId, (int)s.WideLayout, (int)s.CameraCorner, (int)s.TallLayout);
 
+    // ---------------------------------------------------------------- mixer
+
+    // Raised when an app channel is added or removed.
+    public event Action? MixerChanged;
+
+    private readonly Dictionary<int, AppChannelInfo> _apps = new();
+    public IReadOnlyDictionary<int, AppChannelInfo> AppChannels => _apps;
+    public static bool AppAudioSupported => Native.oc_app_audio_supported() != 0;
+
+    private static readonly string[] DiscordExes = { "discord.exe", "discordcanary.exe", "discordptb.exe", "vesktop.exe", "legcord.exe" };
+
+    public ChannelInfo? Channel(int ch) =>
+        ch >= 0 && ch < 3 ? Settings.Channels[ch] : _apps.TryGetValue(ch, out var a) ? a : null;
+
+    private void ApplyMixer()
+    {
+        _apps.Clear();
+        Native.oc_monitor_set_device(Settings.MonitorDevice);
+        if (AppAudioSupported)
+        {
+            // Spotify gets a channel once, if it's installed; removing it sticks.
+            if (!Settings.AddedSpotify)
+            {
+                string? spotify = SpotifyPath();
+                if (spotify != null)
+                {
+                    Settings.AddedSpotify = true;
+                    if (!Settings.AppChannels.Any(a => a.Exe == "spotify.exe"))
+                        Settings.AppChannels.Add(new AppChannelInfo { Exe = "spotify.exe", Name = "Spotify", Path = spotify, MonitorMuted = true });
+                    Settings.Save();
+                }
+            }
+            foreach (var app in Settings.AppChannels)
+            {
+                int ch = Native.oc_app_channel_add(app.Exe);
+                if (ch < 0) continue;
+                _apps[ch] = app;
+                ApplyChannel(ch);
+            }
+        }
+        MixerChanged?.Invoke();
+    }
+
+    private static string? SpotifyPath()
+    {
+        string path = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Spotify", "Spotify.exe");
+        if (File.Exists(path)) return path;
+        // The Microsoft Store version.
+        string apps = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", "Spotify.exe");
+        return File.Exists(apps) ? apps : null;
+    }
+
+    // Running apps with a window, for the "+" menu (minus ones with a channel).
+    public List<AppItem> RunningApps()
+    {
+        if (!IsRunning) return new();
+        try
+        {
+            string json = Native.TakeString(Native.oc_list("audio_apps"));
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.EnumerateArray()
+                .Select(e => new AppItem(e.GetProperty("id").GetString() ?? "", e.GetProperty("name").GetString() ?? "", e.GetProperty("path").GetString() ?? ""))
+                .Where(a => !Settings.AppChannels.Any(c => c.Exe == a.Exe))
+                .ToList();
+        }
+        catch (Exception)
+        {
+            return new();
+        }
+    }
+
+    // Gives an app its own channel. Returns the channel, or -1 when there's no room.
+    public int AddApp(AppItem app)
+    {
+        if (!IsRunning) return -1;
+        int ch = Native.oc_app_channel_add(app.Exe);
+        if (ch < 0) return -1;
+        // Apps keep playing through your speakers, so the monitor mix starts without them.
+        var info = new AppChannelInfo { Exe = app.Exe, Name = app.Name, Path = app.Path, MonitorMuted = true };
+        Settings.AppChannels.Add(info);
+        Settings.Save();
+        _apps[ch] = info;
+        ApplyChannel(ch);
+        MixerChanged?.Invoke();
+        return ch;
+    }
+
+    public void RemoveApp(int ch)
+    {
+        if (!_apps.TryGetValue(ch, out var info)) return;
+        Native.oc_app_channel_remove(ch);
+        _apps.Remove(ch);
+        Settings.AppChannels.Remove(info);
+        Settings.Save();
+        MixerChanged?.Invoke();
+    }
+
+    public void SetMonitorDevice(string id)
+    {
+        Settings.MonitorDevice = id;
+        Settings.Save();
+        if (IsRunning) Native.oc_monitor_set_device(id);
+    }
+
+    // Discord's audio has to have its own channel when Go Live audio is on, or
+    // it's inside desktop audio and the call hears itself.
+    private void AddDiscordIfRunning()
+    {
+        if (!AppAudioSupported || Settings.AppChannels.Any(a => DiscordExes.Contains(a.Exe))) return;
+        foreach (var exe in DiscordExes)
+        {
+            var p = System.Diagnostics.Process.GetProcessesByName(System.IO.Path.GetFileNameWithoutExtension(exe));
+            if (p.Length == 0) continue;
+            string path = "";
+            try { path = p[0].MainModule?.FileName ?? ""; } catch (Exception) { }
+            foreach (var proc in p) proc.Dispose();
+            AddApp(new AppItem(exe, exe == "discord.exe" ? "Discord" : System.IO.Path.GetFileNameWithoutExtension(exe), path));
+            return;
+        }
+    }
+
+    // The music switch: which app's music is on stream. The other one is
+    // muted on stream (if it has a channel); its monitor level is left alone.
+    // [untitled] has no Windows app, so it means the browser's channel.
+    private static readonly string[] BrowserExes = { "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe" };
+
+    public void SelectMusicApp(string source)
+    {
+        Settings.Music.Source = source;
+        if (IsRunning && source == "spotify" && AppAudioSupported && !Settings.AppChannels.Any(a => a.Exe == "spotify.exe") && SpotifyPath() is string sp)
+            AddApp(new AppItem("spotify.exe", "Spotify", sp));
+        foreach (var (ch, app) in _apps)
+        {
+            bool spotify = app.Exe == "spotify.exe", browser = BrowserExes.Contains(app.Exe);
+            if (!spotify && !browser) continue;
+            app.Muted = source == "spotify" ? browser : spotify;
+            ApplyChannel(ch);
+        }
+        Settings.Save();
+        MixerChanged?.Invoke();
+    }
+
+    // ---------------------------------------------------------------- mic plugins
+
+    public const int MaxMicPlugins = 4;
+    public event Action? MicPluginsChanged;
+    private readonly HashSet<int> _pluginFailed = new();
+
+    public bool MicPluginFailed(int slot) => _pluginFailed.Contains(slot);
+
+    private void ApplyMicPlugins()
+    {
+        _pluginFailed.Clear();
+        for (int i = 0; i < MaxMicPlugins; i++)
+        {
+            var p = i < Settings.MicPlugins.Count ? Settings.MicPlugins[i] : null;
+            if (p == null) { Native.oc_mic_plugin_set(i, "", null, 0); continue; }
+            if (Native.oc_mic_plugin_set(i, p.Path, null, 0) == 0) { _pluginFailed.Add(i); continue; }
+            if (p.State.Length > 0) Native.oc_mic_plugin_set_state(i, p.State);
+            Native.oc_mic_plugin_bypass(i, p.Enabled ? 0 : 1);
+        }
+        MicPluginsChanged?.Invoke();
+    }
+
+    // Plugins keep their own settings; they're saved when OmniCast closes or restarts the engine.
+    public void SaveMicPluginStates()
+    {
+        if (!IsRunning) return;
+        for (int i = 0; i < Settings.MicPlugins.Count && i < MaxMicPlugins; i++)
+        {
+            if (_pluginFailed.Contains(i)) continue;
+            string state = Native.TakeString(Native.oc_mic_plugin_get_state(i));
+            if (state.Length > 0) Settings.MicPlugins[i].State = state;
+        }
+        Settings.Save();
+    }
+
+    public List<DeviceItem> InstalledPlugins() => List("vst3")
+        .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+        .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+    public string? AddMicPlugin(DeviceItem plugin)
+    {
+        if (Settings.MicPlugins.Count >= MaxMicPlugins) return "The mic can have 4 plugins at most.";
+        SaveMicPluginStates();
+        int slot = Settings.MicPlugins.Count;
+        var err = new byte[256];
+        if (Native.oc_mic_plugin_set(slot, plugin.Id, err, err.Length) == 0)
+            return $"{plugin.Name} didn't load: {Native.Err(err)}";
+        Settings.MicPlugins.Add(new MicPlugin { Path = plugin.Id, Name = plugin.Name });
+        Settings.Save();
+        MicPluginsChanged?.Invoke();
+        return null;
+    }
+
+    public void RemoveMicPlugin(int slot)
+    {
+        if (slot < 0 || slot >= Settings.MicPlugins.Count) return;
+        SaveMicPluginStates();
+        Settings.MicPlugins.RemoveAt(slot);
+        Settings.Save();
+        ApplyMicPlugins(); // later plugins move up a slot
+    }
+
+    public void SetMicPluginEnabled(int slot, bool on)
+    {
+        if (slot < 0 || slot >= Settings.MicPlugins.Count) return;
+        Settings.MicPlugins[slot].Enabled = on;
+        Settings.Save();
+        Native.oc_mic_plugin_bypass(slot, on ? 0 : 1);
+    }
+
+    public bool HasDiscordChannel => Settings.AppChannels.Any(a => DiscordExes.Contains(a.Exe));
+
     public void ApplyChannel(int ch)
     {
-        var c = Settings.Channels[ch];
+        var c = Channel(ch);
+        if (c == null) return;
+        Native.oc_monitor_set(ch, (float)c.Monitor, c.MonitorMuted ? 1 : 0);
         bool muted = c.Muted;
         // A scene can mute the mic while it's on air ("Be right back").
         if (ch == Native.ChMic)

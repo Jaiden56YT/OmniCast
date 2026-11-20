@@ -61,6 +61,10 @@ public sealed partial class SettingsPage : Page
         var v = Assembly.GetExecutingAssembly().GetName().Version;
         VersionText.Text = $"OmniCast for Windows {v?.Major}.{v?.Minor}.{v?.Build}";
         LoadDiscord();
+        LoadChat();
+        LoadMusic();
+        LoadCall();
+        LoadAccounts();
         _loading = false;
         UpdateVideoState();
     }
@@ -219,6 +223,8 @@ public sealed partial class SettingsPage : Page
         static string Status(bool on, bool running) => !on ? "" : running ? "● Playing" : "Couldn't open this device";
         VoiceStatus.Text = Status(_host.Settings.DiscordVoiceDevice.Length > 0, _host.DiscordOutputRunning(Native.DiscordVoice));
         StreamAudioStatus.Text = Status(_host.Settings.DiscordStreamAudioDevice.Length > 0, _host.DiscordOutputRunning(Native.DiscordStreamAudio));
+        if (StreamAudioStatus.Text.Length > 0 && EngineHost.AppAudioSupported && !_host.HasDiscordChannel)
+            StreamAudioStatus.Text += " · Give Discord its own channel (+ in Studio › Audio), or the call will hear itself";
         VoiceStatus.Visibility = VoiceStatus.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         StreamAudioStatus.Visibility = StreamAudioStatus.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -236,6 +242,263 @@ public sealed partial class SettingsPage : Page
         Process.Start(new ProcessStartInfo(VbCablePage) { UseShellExecute = true });
 
     private void CheckCable_Click(object sender, RoutedEventArgs e) => LoadDiscord();
+
+    // ---------------------------------------------------------------- chat
+
+    private void LoadChat()
+    {
+        var c = _host.Settings.Chat;
+        YouTubeName.Text = c.YouTube;
+        TwitchName.Text = c.Twitch;
+        KickName.Text = c.Kick;
+        YouTubeOn.IsOn = c.Enabled.Contains("youtube");
+        TwitchOn.IsOn = c.Enabled.Contains("twitch");
+        KickOn.IsOn = c.Enabled.Contains("kick");
+        KickRoom.Text = c.KickChatroom?.ToString() ?? "";
+        ChatVisible.IsOn = c.Visible;
+        ChatVertical.IsOn = c.Vertical;
+        ChatSize.SelectedIndex = c.Size switch { "small" => 0, "large" => 2, _ => 1 };
+        ChatHide.SelectedIndex = c.HideAfter switch { 30 => 1, 60 => 2, 120 => 3, _ => 0 };
+        if (!_chatHooked)
+        {
+            _chatHooked = true;
+            OmniCast.Chat.ChatHub.Current.StatusChanged += UpdateChatStatus;
+        }
+        UpdateChatStatus();
+    }
+
+    private bool _chatHooked;
+
+    private void UpdateChatStatus()
+    {
+        var hub = OmniCast.Chat.ChatHub.Current;
+        YouTubeStatus.Text = hub.StatusOf(OmniCast.Chat.ChatPlatform.YouTube).Text;
+        TwitchStatus.Text = hub.StatusOf(OmniCast.Chat.ChatPlatform.Twitch).Text;
+        KickStatus.Text = hub.StatusOf(OmniCast.Chat.ChatPlatform.Kick).Text;
+        ChatSummary.Text = hub.Summary + " · Chat is read only: nothing is ever posted. YouTube connects once you go live. Instagram doesn't let apps read live chat.";
+    }
+
+    private void ChatSave_Click(object sender, RoutedEventArgs e)
+    {
+        var c = _host.Settings.Chat;
+        c.YouTube = YouTubeName.Text.Trim();
+        c.Twitch = TwitchName.Text.Trim();
+        c.Kick = KickName.Text.Trim();
+        c.KickChatroom = long.TryParse(KickRoom.Text.Trim(), out long room) ? room : null;
+        c.Enabled = new();
+        if (YouTubeOn.IsOn) c.Enabled.Add("youtube");
+        if (TwitchOn.IsOn) c.Enabled.Add("twitch");
+        if (KickOn.IsOn) c.Enabled.Add("kick");
+        _host.Settings.Save();
+        OmniCast.Chat.ChatHub.Current.Restart();
+    }
+
+    private void ChatLook_Changed(object sender, object e)
+    {
+        if (_loading) return;
+        var c = _host.Settings.Chat;
+        c.Visible = ChatVisible.IsOn;
+        c.Vertical = ChatVertical.IsOn;
+        c.Size = (ChatSize.SelectedItem as ComboBoxItem)?.Tag as string ?? "medium";
+        c.HideAfter = int.TryParse((ChatHide.SelectedItem as ComboBoxItem)?.Tag as string, out int h) ? h : 0;
+        _host.Settings.Save();
+        OmniCast.Overlays.ChatOverlay.Current.Invalidate();
+    }
+
+    private void ChatTest_Click(object sender, RoutedEventArgs e) => OmniCast.Chat.ChatHub.Current.AddTestMessages();
+
+    private void ChatClear_Click(object sender, RoutedEventArgs e) => OmniCast.Chat.ChatHub.Current.Clear();
+
+    // ---------------------------------------------------------------- music
+
+    private void LoadMusic()
+    {
+        var m = _host.Settings.Music;
+        MusicSource.SelectedIndex = m.Source == "untitled" ? 1 : 0;
+        CardOn.IsOn = m.CardEnabled;
+        CardCorner.SelectedIndex = m.Corner switch { "topLeft" => 0, "topRight" => 1, "bottomRight" => 3, _ => 2 };
+        CardVertical.IsOn = m.Vertical;
+        if (!_musicHooked)
+        {
+            _musicHooked = true;
+            NowPlaying.Current.Changed += _ => UpdateMusicStatus();
+        }
+        UpdateMusicStatus();
+    }
+
+    private bool _musicHooked;
+
+    private void UpdateMusicStatus()
+    {
+        var t = NowPlaying.Current.Track;
+        MusicStatus.Text = t is { Playing: true } ? $"♪ {t.Title} · {t.Artist}" : "Nothing playing right now";
+    }
+
+    private void Music_Changed(object sender, object e)
+    {
+        if (_loading) return;
+        var m = _host.Settings.Music;
+        string source = (MusicSource.SelectedItem as ComboBoxItem)?.Tag as string ?? "spotify";
+        m.CardEnabled = CardOn.IsOn;
+        m.Corner = (CardCorner.SelectedItem as ComboBoxItem)?.Tag as string ?? "bottomLeft";
+        m.Vertical = CardVertical.IsOn;
+        if (ReferenceEquals(sender, MusicSource) && source != m.Source)
+        {
+            _host.SelectMusicApp(source);
+            OmniCast.Overlays.NowPlayingCard.Current.SourceChanged();
+        }
+        _host.Settings.Save();
+        OmniCast.Overlays.NowPlayingCard.Current.SettingsChanged();
+    }
+
+    private void MusicPreview_Click(object sender, RoutedEventArgs e) => _ = OmniCast.Overlays.NowPlayingCard.Current.PreviewAsync();
+
+    // ---------------------------------------------------------------- discord call
+
+    private bool _callHooked;
+
+    private void LoadCall()
+    {
+        var d = _host.Settings.Discord;
+        CallClientId.Text = d.ClientId;
+        CallSecret.PlaceholderText = OmniCast.Discord.DiscordCall.HasSecret ? "Client Secret (saved)" : "Client Secret";
+        CallVisible.IsOn = d.Visible;
+        CallDim.IsOn = d.DimQuiet;
+        MeOn.IsOn = d.MeEnabled;
+        MeSensitivity.SelectedIndex = d.MeThreshold <= -45 ? 0 : d.MeThreshold >= -35 ? 2 : 1;
+        if (!_callHooked)
+        {
+            _callHooked = true;
+            OmniCast.Discord.DiscordCall.Current.StatusChanged += UpdateCallStatus;
+            OmniCast.Discord.DiscordCall.Current.MembersChanged += UpdateCallStatus;
+            OmniCast.Overlays.CallOverlay.Current.MeTalkingChanged += UpdateCallStatus;
+        }
+        UpdateCallStatus();
+    }
+
+    private void UpdateCallStatus()
+    {
+        var call = OmniCast.Discord.DiscordCall.Current;
+        CallStatus.Text = call.InCall ? $"{call.Members.Count} in {call.ChannelName}" : call.Status;
+        CallConnect.Content = call.Connected ? "Disconnect" : "Connect";
+        var d = _host.Settings.Discord;
+        MeStatus.Text = d.MeIdle.Length == 0 ? "Pick idle and talking images. It talks when your mic does."
+            : OmniCast.Overlays.CallOverlay.Current.MeTalking ? "● Talking" : "PNGtuber · talks with your mic";
+    }
+
+    private void CallConnect_Click(object sender, RoutedEventArgs e)
+    {
+        var call = OmniCast.Discord.DiscordCall.Current;
+        if (call.Connected) { call.Disconnect(); return; }
+        _host.Settings.Discord.ClientId = CallClientId.Text.Trim();
+        OmniCast.Discord.DiscordCall.SetSecret(CallSecret.Password);
+        CallSecret.Password = "";
+        CallSecret.PlaceholderText = OmniCast.Discord.DiscordCall.HasSecret ? "Client Secret (saved)" : "Client Secret";
+        _host.Settings.Save();
+        call.Connect();
+    }
+
+    private void CallSignOut_Click(object sender, RoutedEventArgs e) => OmniCast.Discord.DiscordCall.Current.SignOut();
+
+    private void CallArrange_Click(object sender, RoutedEventArgs e) => OmniCast.Overlays.CallOverlay.Current.ArrangeRow();
+
+    private void Call_Changed(object sender, object e)
+    {
+        if (_loading) return;
+        var d = _host.Settings.Discord;
+        d.Visible = CallVisible.IsOn;
+        d.DimQuiet = CallDim.IsOn;
+        d.MeEnabled = MeOn.IsOn;
+        d.MeThreshold = double.TryParse((MeSensitivity.SelectedItem as ComboBoxItem)?.Tag as string, out double t) ? t : -40;
+        _host.Settings.Save();
+        OmniCast.Overlays.CallOverlay.Current.Refresh();
+        UpdateCallStatus();
+    }
+
+    private async void MeIdle_Click(object sender, RoutedEventArgs e) => await PickMeImage(talking: false);
+    private async void MeTalk_Click(object sender, RoutedEventArgs e) => await PickMeImage(talking: true);
+
+    // Copies the picked image into OmniCast's overlay folder, so moving the original doesn't break it.
+    private async System.Threading.Tasks.Task PickMeImage(bool talking)
+    {
+        var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.PicturesLibrary };
+        foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp" }) picker.FileTypeFilter.Add(ext);
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.Current!.Window!));
+        var file = await picker.PickSingleFileAsync();
+        if (file == null) return;
+        string dir = OmniCast.Overlays.OverlayCanvas.Dir;
+        Directory.CreateDirectory(dir);
+        string dest = Path.Combine(dir, (talking ? "you-talking" : "you-idle") + Path.GetExtension(file.Path).ToLowerInvariant());
+        File.Copy(file.Path, dest, true);
+        var d = _host.Settings.Discord;
+        if (talking) d.MeTalk = dest; else d.MeIdle = dest;
+        _host.Settings.Save();
+        OmniCast.Overlays.CallOverlay.Current.ForgetMe(); // same path as before: draw it again
+        OmniCast.Overlays.CallOverlay.Current.Refresh();
+        UpdateCallStatus();
+    }
+
+    // ---------------------------------------------------------------- accounts
+
+    private bool _signingIn;
+
+    private (TextBox Id, PasswordBox? Secret, TextBlock Status, Button Connect, Button SignOut) AccountControls(string key) => key switch
+    {
+        "twitch" => (AccTwitchId, null, AccTwitchStatus, AccTwitchConnect, AccTwitchSignOut),
+        "kick" => (AccKickId, AccKickSecret, AccKickStatus, AccKickConnect, AccKickSignOut),
+        _ => (AccYouTubeId, AccYouTubeSecret, AccYouTubeStatus, AccYouTubeConnect, AccYouTubeSignOut),
+    };
+
+    private static OmniCast.Accounts.StreamAccount Account(string key) =>
+        OmniCast.Accounts.StreamAccounts.All.First(a => a.Key == key);
+
+    private void LoadAccounts()
+    {
+        foreach (var a in OmniCast.Accounts.StreamAccounts.All)
+        {
+            var c = AccountControls(a.Key);
+            c.Id.Text = a.ClientId;
+            if (c.Secret != null) c.Secret.PlaceholderText = a.HasSecret ? "Client Secret (saved)" : "Client Secret";
+            c.Status.Text = a.Connected ? $"Connected as {a.Login}" : "Not connected";
+            c.Connect.Content = a.Connected ? "Reconnect" : "Connect";
+            c.Connect.IsEnabled = !_signingIn;
+            c.SignOut.Visibility = a.Connected ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    private async void AccountConnect_Click(object sender, RoutedEventArgs e)
+    {
+        string key = (string)((Button)sender).Tag;
+        var a = Account(key);
+        var c = AccountControls(key);
+        a.ClientId = c.Id.Text;
+        if (c.Secret != null && c.Secret.Password.Length > 0)
+        {
+            a.SetSecret(c.Secret.Password);
+            c.Secret.Password = "";
+        }
+        _signingIn = true;
+        LoadAccounts();
+        c.Status.Text = "Connecting…";
+        try
+        {
+            await a.ConnectAsync(msg => DispatcherQueue.TryEnqueue(() => c.Status.Text = msg), default);
+            _signingIn = false;
+            LoadAccounts();
+        }
+        catch (Exception ex)
+        {
+            _signingIn = false;
+            LoadAccounts();
+            c.Status.Text = ex is OmniCast.Accounts.AccountException ? ex.Message : $"Couldn't connect: {ex.Message}";
+        }
+    }
+
+    private void AccountSignOut_Click(object sender, RoutedEventArgs e)
+    {
+        Account((string)((Button)sender).Tag).SignOut();
+        LoadAccounts();
+    }
 
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
     {

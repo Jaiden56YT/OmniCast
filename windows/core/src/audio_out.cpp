@@ -10,6 +10,7 @@
 // stereo float). That callback only copies into a lock-free ring; a WASAPI
 // render thread per output feeds the device from the ring, ~20-40 ms behind.
 #include "internal.h"
+#include "ring.h"
 
 #include <windows.h>
 #include <initguid.h> // defines the WASAPI and property-key GUIDs used below, once
@@ -24,49 +25,6 @@
 namespace oc {
 
 static constexpr uint32_t RATE = 48000, CHANNELS = 2;
-
-// Single-producer (libobs audio thread), single-consumer (render thread).
-class Ring {
-public:
-	void reset(size_t frames)
-	{
-		buf_.assign(frames * CHANNELS, 0.0f);
-		cap_ = frames;
-		w_ = r_ = 0;
-	}
-	size_t available() const { return w_.load(std::memory_order_acquire) - r_.load(std::memory_order_acquire); }
-	void push(const float *src, size_t frames)
-	{
-		size_t w = w_.load(std::memory_order_relaxed), r = r_.load(std::memory_order_acquire);
-		if (frames > cap_ - (w - r))
-			frames = cap_ - (w - r); // full: the device stalled; drop the newest
-		for (size_t i = 0; i < frames; i++) {
-			size_t at = ((w + i) % cap_) * CHANNELS;
-			buf_[at] = src[i * CHANNELS];
-			buf_[at + 1] = src[i * CHANNELS + 1];
-		}
-		w_.store(w + frames, std::memory_order_release);
-	}
-	size_t pop(float *dst, size_t frames)
-	{
-		size_t r = r_.load(std::memory_order_relaxed), n = available();
-		if (frames > n)
-			frames = n;
-		for (size_t i = 0; i < frames; i++) {
-			size_t at = ((r + i) % cap_) * CHANNELS;
-			dst[i * CHANNELS] = buf_[at];
-			dst[i * CHANNELS + 1] = buf_[at + 1];
-		}
-		r_.store(r + frames, std::memory_order_release);
-		return frames;
-	}
-	void skip(size_t frames) { r_.fetch_add(frames, std::memory_order_acq_rel); }
-
-private:
-	std::vector<float> buf_;
-	size_t cap_ = 0;
-	std::atomic<size_t> w_{0}, r_{0};
-};
 
 struct Output {
 	size_t mix = 0;

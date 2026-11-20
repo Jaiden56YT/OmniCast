@@ -46,7 +46,12 @@ public partial class App : Application
         Tray.ScenesProvider = () => host.Scenes.Select(s => (s.Name, s.Id == host.ActiveScene.Id)).ToList();
         host.PropertyChanged += OnHostChanged;
 
+        Overlays.ChatOverlay.Current.Start();
+        Overlays.NowPlayingCard.Current.Start();
+        Overlays.CallOverlay.Current.Start();
+        OmniCast.Chat.ChatHub.Current.Restart();
         await host.StartAsync();
+        OmniCast.Discord.DiscordCall.Current.Resume();
     }
 
     private void OnHostChanged(object? sender, PropertyChangedEventArgs e)
@@ -99,6 +104,7 @@ public partial class App : Application
     {
         if (_quitting) return;
         _quitting = true;
+        OmniCast.Chat.ChatHub.Current.Stop();
         EngineHost.Current.Shutdown();
         Tray?.Dispose();
         Toasts.Unregister();

@@ -9,8 +9,9 @@ now-playing card, a virtual camera, and Discord audio routing.
 It's built on libobs, the engine inside OBS Studio, with a native SwiftUI app on
 top: no Electron, no Qt.
 
-**On Windows?** OmniCast for Windows is its own app, made for Windows: see
-[windows/README.md](windows/README.md).
+**On Windows?** OmniCast for Windows is its own app, made for Windows.
+[Download the installer](https://github.com/Jaiden56YT/OmniCast/releases?q=windows&expanded=true),
+or see [windows/README.md](windows/README.md) to build it.
 
 ## Requirements
 

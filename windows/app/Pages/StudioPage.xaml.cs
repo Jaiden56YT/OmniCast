@@ -19,7 +19,7 @@ public sealed partial class StudioPage : Page
     private readonly EngineHost _host = EngineHost.Current;
     private readonly DispatcherQueueTimer _meterTimer;
     private readonly DispatcherQueueTimer _statsTimer;
-    private readonly AudioRow[] _rows;
+    private readonly List<AudioRow> _rows = new();
     private readonly bool[] _attached = new bool[2];
     private bool _loaded, _updating;
     private uint _skippedAtStart, _laggedAtStart;
@@ -28,14 +28,8 @@ public sealed partial class StudioPage : Page
     {
         InitializeComponent();
 
-        _rows = new[]
-        {
-            new AudioRow(Native.ChMic, "Mic", "\uE720"),
-            new AudioRow(Native.ChDesktop, "Desktop audio", "\uE7F5"),
-            new AudioRow(Native.ChCapture, "Capture card", "\uE7F4"),
-        };
-        foreach (var r in _rows)
-            AudioRows.Children.Add(r);
+        RebuildAudioRows();
+        _host.MixerChanged += () => { if (_loaded) RebuildAudioRows(); };
 
         var dq = DispatcherQueue.GetForCurrentThread();
         _meterTimer = dq.CreateTimer();
@@ -64,6 +58,7 @@ public sealed partial class StudioPage : Page
             if (_host.IsRunning && !_attached[0])
                 OnEngineStarted();
             RebuildSceneButtons();
+            RebuildAudioRows();
             LoadTransition();
             RefreshUi();
             UpdateTimersAndPreviews();
@@ -193,9 +188,15 @@ public sealed partial class StudioPage : Page
         RecordIcon.Glyph = _host.IsRecording ? "\uE71A" : "\uE7C8";
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(LiveButton, LiveText.Text);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(RecordButton, RecordText.Text);
+        VcamButton.IsEnabled = running;
+        VcamText.Text = _host.IsVirtualCameraOn ? "Stop virtual camera" : "Start virtual camera";
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(VcamButton, VcamText.Text);
+        VcamWide.IsChecked = _host.Settings.VirtualCameraCanvas == 0;
+        VcamTall.IsChecked = _host.Settings.VirtualCameraCanvas == 1;
         WideLabel.Text = "16:9 · YouTube, Twitch, Kick";
         _rows[2].Visibility = running && Native.oc_audio_present(Native.ChCapture) != 0 ? Visibility.Visible : Visibility.Collapsed;
         foreach (var r in _rows) r.Load();
+        AddAppButton.Visibility = running && EngineHost.AppAudioSupported ? Visibility.Visible : Visibility.Collapsed;
         _rows[0].SetSceneMuted(_host.ActiveScene.MuteMic);
         UpdateDestinationsLink();
         UpdateOverlay();
@@ -247,6 +248,150 @@ public sealed partial class StudioPage : Page
     {
         if (_host.IsRecording) { _host.StopRecording(); ShowError(null); }
         else ShowError(_host.StartRecording());
+    }
+
+    private async void Vcam_Click(SplitButton sender, SplitButtonClickEventArgs e)
+    {
+        if (_host.IsVirtualCameraOn) { _host.StopVirtualCamera(); ShowError(null); RefreshUi(); return; }
+        if (!EngineHost.VirtualCameraInstalled)
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "Set up the virtual camera?",
+                Content = "Windows needs to register OmniCast's virtual camera once. You'll be asked for permission. " +
+                          "Apps will list it as \"OBS Virtual Camera\" (it's the camera OBS uses on Windows).",
+                PrimaryButtonText = "Set up",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (!await EngineHost.InstallVirtualCameraAsync())
+            {
+                ShowError("The virtual camera wasn't set up. Windows needs admin permission for it.");
+                return;
+            }
+        }
+        ShowError(_host.StartVirtualCamera());
+        RefreshUi();
+    }
+
+    private void VcamCanvas_Click(object sender, RoutedEventArgs e)
+    {
+        _host.SetVirtualCameraCanvas(ReferenceEquals(sender, VcamTall) ? 1 : 0);
+        RefreshUi();
+    }
+
+    // ---------------------------------------------------------------- mixer
+
+    private void RebuildAudioRows()
+    {
+        _rows.Clear();
+        AudioRows.Children.Clear();
+        var fx = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight };
+        fx.Opening += (_, _) => BuildFxMenu(fx);
+        _rows.Add(new AudioRow(Native.ChMic, "Mic", "\uE720", fx: fx));
+        _rows.Add(new AudioRow(Native.ChDesktop, "Desktop audio", "\uE7F5"));
+        _rows.Add(new AudioRow(Native.ChCapture, "Capture card", "\uE7F4"));
+        foreach (var (ch, app) in _host.AppChannels.OrderBy(a => a.Key))
+            _rows.Add(new AudioRow(ch, app.Name, "\uE8FC", app.Path, () => _host.RemoveApp(ch)));
+        foreach (var r in _rows)
+        {
+            AudioRows.Children.Add(r);
+            r.Load();
+        }
+        _rows[0].SetSceneMuted(_host.ActiveScene.MuteMic);
+        _rows[2].Visibility = _host.IsRunning && Native.oc_audio_present(Native.ChCapture) != 0 ? Visibility.Visible : Visibility.Collapsed;
+        AddAppButton.Visibility = _host.IsRunning && EngineHost.AppAudioSupported ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // The mic's plugins: each with its editor, an on/off switch and remove; then "Add a plugin".
+    private void BuildFxMenu(MenuFlyout menu)
+    {
+        menu.Items.Clear();
+        var plugins = _host.Settings.MicPlugins;
+        for (int i = 0; i < plugins.Count; i++)
+        {
+            int slot = i;
+            var p = plugins[i];
+            var sub = new MenuFlyoutSubItem { Text = _host.MicPluginFailed(i) ? $"{p.Name} (didn't load)" : p.Name };
+            var open = new MenuFlyoutItem { Text = "Open editor", IsEnabled = !_host.MicPluginFailed(i) };
+            open.Click += (_, _) => Native.oc_mic_plugin_open_editor(slot);
+            var on = new ToggleMenuFlyoutItem { Text = "On", IsChecked = p.Enabled };
+            on.Click += (_, _) => _host.SetMicPluginEnabled(slot, on.IsChecked);
+            var remove = new MenuFlyoutItem { Text = "Remove" };
+            remove.Click += (_, _) => _host.RemoveMicPlugin(slot);
+            sub.Items.Add(open);
+            sub.Items.Add(on);
+            sub.Items.Add(new MenuFlyoutSeparator());
+            sub.Items.Add(remove);
+            menu.Items.Add(sub);
+        }
+        if (plugins.Count > 0) menu.Items.Add(new MenuFlyoutSeparator());
+        var add = new MenuFlyoutSubItem { Text = "Add a plugin", IsEnabled = plugins.Count < EngineHost.MaxMicPlugins && _host.IsRunning };
+        var installed = _host.InstalledPlugins();
+        // STACKS and Muze first: they're what OmniCast is set up for.
+        foreach (var name in new[] { "STACKS", "Muze" })
+            if (installed.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is DeviceItem star)
+                add.Items.Add(PluginItem(star));
+        if (add.Items.Count > 0) add.Items.Add(new MenuFlyoutSeparator());
+        foreach (var p in installed.Where(p => p.Name is not ("STACKS" or "Muze")))
+            add.Items.Add(PluginItem(p));
+        if (installed.Count == 0) add.Items.Add(new MenuFlyoutItem { Text = "No VST3 plugins installed", IsEnabled = false });
+        menu.Items.Add(add);
+    }
+
+    private MenuFlyoutItem PluginItem(DeviceItem p)
+    {
+        var item = new MenuFlyoutItem { Text = p.Name };
+        item.Click += (_, _) => ShowError(_host.AddMicPlugin(p));
+        return item;
+    }
+
+    private async void StreamInfo_Click(object sender, RoutedEventArgs e)
+    {
+        try { await new StreamInfoDialog(XamlRoot).ShowAsync(); }
+        catch (Exception ex)
+        {
+            ShowError($"Stream info: {ex.Message}");
+            System.IO.File.WriteAllText(System.IO.Path.Combine(AppSettings.DataDir, "streaminfo-error.txt"), ex.ToString());
+        }
+    }
+
+    private void AddAppMenu_Opening(object? sender, object e)
+    {
+        AddAppMenu.Items.Clear();
+        var apps = _host.RunningApps();
+        if (apps.Count == 0)
+        {
+            AddAppMenu.Items.Add(new MenuFlyoutItem { Text = "No other apps running", IsEnabled = false });
+            return;
+        }
+        foreach (var app in apps)
+        {
+            var item = new MenuFlyoutItem { Text = app.Name };
+            ToolTipService.SetToolTip(item, app.Exe);
+            item.Click += (_, _) =>
+            {
+                if (_host.AddApp(app) < 0)
+                    ShowError("There's no room for another app channel (13 at most).");
+            };
+            AddAppMenu.Items.Add(item);
+        }
+    }
+
+    private void MonitorMenu_Opening(object? sender, object e)
+    {
+        MonitorMenu.Items.Clear();
+        MonitorMenu.Items.Add(new MenuFlyoutItem { Text = "Monitor output", IsEnabled = false });
+        var devices = new List<DeviceItem> { new("", "Windows default output") };
+        devices.AddRange(_host.List("audio_outputs").Where(d => d.Id != "default"));
+        foreach (var d in devices)
+        {
+            var item = new RadioMenuFlyoutItem { Text = d.Name, GroupName = "monitor", IsChecked = d.Id == _host.Settings.MonitorDevice };
+            item.Click += (_, _) => _host.SetMonitorDevice(d.Id);
+            MonitorMenu.Items.Add(item);
+        }
     }
 
     private void Destinations_Click(object sender, RoutedEventArgs e)
