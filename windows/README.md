@@ -12,13 +12,24 @@ low-end PCs: 720p60 by default, 1080p60 when you want it.
 This is the Windows sibling of OmniCast for Mac (the rest of this repository).
 It's its own app, not a port: same idea and features, built the Windows way.
 
-## Requirements
+## Download
 
-**To run it:** Windows 10 version 2004 or later, or Windows 11, 64-bit, with a
-Direct3D 11 graphics card (practically any from the last 12 years). No .NET,
-Windows App SDK or OBS Studio install is needed; the app folder has everything.
+1. Open the [latest Windows release](https://github.com/Jaiden56YT/OmniCast/releases?q=windows&expanded=true)
+   and download **OmniCast-Setup-x64.exe** (about 40 MB).
+2. Run it. Pick **Install for me only** if you don't have admin rights.
+3. If Windows says "Windows protected your PC", click **More info**, then
+   **Run anyway**. The installer isn't code-signed yet, so Windows doesn't
+   recognise it.
+4. Open OmniCast from the Start menu and follow [First run](#first-run).
 
-**To build it:**
+It needs Windows 10 version 2004 or later, or Windows 11, 64-bit, with a
+Direct3D 11 graphics card (practically any from the last 12 years). Nothing
+else to install: .NET, the Windows App SDK and libobs come with it, and you
+don't need OBS Studio.
+
+Want to build it yourself instead, or change the code? Read on.
+
+## Requirements to build it
 
 - **Visual Studio 2022** (Community is free) or just its **Build Tools**, with
   the **Desktop development with C++** workload. It includes CMake and the
@@ -33,12 +44,12 @@ winget install Microsoft.DotNet.SDK.8
 winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
-## Quick start
+## Build from source
 
-In PowerShell:
+In PowerShell (the Windows app is on the `feature/windows-app` branch):
 
 ```powershell
-git clone https://github.com/Jaiden56YT/OmniCast.git
+git clone -b feature/windows-app https://github.com/Jaiden56YT/OmniCast.git
 cd OmniCast
 .\windows\build.ps1
 .\windows\build\OmniCast\OmniCast.exe
