@@ -37,6 +37,8 @@ extern Engine engine;
 // Audio mixes: 1 = everything (stream and recording track 1), 2 = desktop
 // audio and the capture card (track 2), 3 = mic (track 3).
 constexpr uint32_t MIX_ALL = 1 << 0, MIX_DESKTOP = 1 << 1, MIX_MIC = 1 << 2;
+// App channel c plays on libobs output channel APP_OUTPUT_BASE + c.
+constexpr uint32_t APP_OUTPUT_BASE = 8;
 
 // engine.cpp
 video_t *canvas_video(int canvas);
@@ -61,6 +63,31 @@ void audio_detach_all();
 void preview_register();
 void preview_unregister();
 void preview_detach_all();
+
+// proc_audio.cpp
+void proc_audio_register();
+bool proc_audio_supported();
+obs_source_t *create_system_audio();
+bool is_discord_exe(const std::string &exe);
+void app_channels_release();
+void list_audio_apps(std::string &json, bool &first);
+
+// monitor.cpp
+void monitor_attach(int channel, obs_source_t *source);
+void monitor_start();
+void monitor_stop();
+
+// overlay.cpp
+void overlays_init();
+void overlays_release();
+
+// vst3.cpp
+void vst3_register();
+void vst3_release();
+void list_vst3(std::string &json, bool &first);
+
+// vcam.cpp
+void vcam_stop();
 
 // outputs.cpp
 void outputs_stop_all_and_wait();

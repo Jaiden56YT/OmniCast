@@ -279,16 +279,33 @@ static obs_source_t *make_audio(const char *type, const char *name, const char *
 	return src;
 }
 
+// Desktop audio: on the default output (Windows 10 2004+) it's everything but
+// OmniCast and the apps with their own channel; on a chosen device, that
+// device's whole output.
+static obs_source_t *make_desktop(const char *id)
+{
+	bool follow = !id || !*id || !strcmp(id, "default");
+	obs_source_t *src = follow && proc_audio_supported() ? create_system_audio() : nullptr;
+	if (src)
+		obs_source_set_audio_mixers(src, MIX_ALL | MIX_DESKTOP);
+	else
+		src = make_audio("wasapi_output_capture", "Desktop Audio", id, MIX_ALL | MIX_DESKTOP);
+	return src;
+}
+
 static void create_audio_sources()
 {
+	proc_audio_register();
+	vst3_register();
 	engine.mic = make_audio("wasapi_input_capture", "Mic", "default", MIX_ALL | MIX_MIC);
-	engine.desktop = make_audio("wasapi_output_capture", "Desktop Audio", "default", MIX_ALL | MIX_DESKTOP);
+	engine.desktop = make_desktop("default");
 	if (engine.desktop)
 		obs_set_output_source(1, engine.desktop);
 	if (engine.mic)
 		obs_set_output_source(3, engine.mic);
 	audio_attach(OC_CH_MIC, engine.mic);
 	audio_attach(OC_CH_DESKTOP, engine.desktop);
+	monitor_start();
 }
 
 } // namespace oc
@@ -473,6 +490,7 @@ OC_API int32_t oc_start(const char *app_dir, const char *config_dir, const oc_vi
 
 	create_audio_sources();
 	scenes_init();
+	overlays_init();
 	preview_register();
 
 	blog(LOG_INFO, "[OmniCast] %ux%u + %ux%u at %d fps, GPU %s, encoder %s", engine.wide_w, engine.wide_h,
@@ -486,16 +504,21 @@ static void probes_release();
 OC_API void oc_shutdown(void)
 {
 	discord_outputs_stop();
+	vcam_stop();
 	outputs_stop_all_and_wait();
 	probes_release();
 	preview_detach_all();
 	preview_unregister();
+	app_channels_release();
+	vst3_release();
+	monitor_stop();
 	audio_detach_all();
+	overlays_release();
 	scenes_release();
 	obs_encoder_release(engine.aenc);
 	engine.aenc = nullptr;
 	release_canvas_and_encoders();
-	for (uint32_t ch = 0; ch < 6; ch++)
+	for (uint32_t ch = 0; ch < APP_OUTPUT_BASE + OC_CH_COUNT; ch++)
 		obs_set_output_source(ch, nullptr);
 	for (obs_source_t **s : {&engine.mic, &engine.desktop}) {
 		obs_source_release(*s);
@@ -676,6 +699,10 @@ OC_API char *oc_list(const char *what)
 			prop = "device_id";
 		} else if (!strcmp(what, "loopback_outputs")) {
 			list_loopback_outputs(out, first);
+		} else if (!strcmp(what, "vst3")) {
+			list_vst3(out, first);
+		} else if (!strcmp(what, "audio_apps")) {
+			list_audio_apps(out, first);
 		}
 		append_list(out, props, prop, first);
 		obs_properties_destroy(props);
@@ -733,5 +760,21 @@ OC_API void oc_mic_set_device(const char *id)
 
 OC_API void oc_desktop_set_device(const char *id)
 {
-	set_audio_device(engine.desktop, id);
+	if (!engine.running)
+		return;
+	bool follow = !id || !*id || !strcmp(id, "default");
+	bool is_system = engine.desktop && !strcmp(obs_source_get_id(engine.desktop), "omni_proc_audio");
+	if (engine.desktop && !is_system && !(follow && proc_audio_supported())) {
+		set_audio_device(engine.desktop, id); // device to device
+		return;
+	}
+	if (engine.desktop && is_system && follow)
+		return;
+	audio_attach(OC_CH_DESKTOP, nullptr);
+	obs_set_output_source(1, nullptr);
+	obs_source_release(engine.desktop);
+	engine.desktop = make_desktop(id);
+	if (engine.desktop)
+		obs_set_output_source(1, engine.desktop);
+	audio_attach(OC_CH_DESKTOP, engine.desktop);
 }

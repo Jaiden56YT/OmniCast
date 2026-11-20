@@ -45,6 +45,14 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
     <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="1.8.260708001" />
+    <!-- Direct2D drawing for the overlays (chat, now playing, the Discord call). -->
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The Discord call overlay talks to Discord over a named pipe; keep the
+         pipes library (trimming otherwise leaves it out of the app's load list). -->
+    <TrimmerRootAssembly Include="System.IO.Pipes" />
   </ItemGroup>
 
   <ItemGroup>

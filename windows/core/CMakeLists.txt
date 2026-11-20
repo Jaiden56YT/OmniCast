@@ -1,4 +1,4 @@
-# OmniCore.dll: the OmniCast for Windows engine over libobs.
+﻿# OmniCore.dll: the OmniCast for Windows engine over libobs.
 # Built by windows/build.ps1; needs windows/scripts/bootstrap.ps1 to have run.
 cmake_minimum_required(VERSION 3.24)
 project(OmniCore LANGUAGES CXX)
@@ -39,11 +39,21 @@ add_library(OmniCore SHARED
   src/outputs.cpp
   src/scenes.cpp
   src/audio_out.cpp
+  src/vcam.cpp
+  src/proc_audio.cpp
+  src/monitor.cpp
+  src/overlay.cpp
+  src/vst3.cpp
+  # Steinberg's VST3 interfaces (MIT): the interface ids for hosting plugins.
+  "${VENDOR}/vst3/pluginterfaces/base/funknown.cpp"
 )
-target_include_directories(OmniCore PRIVATE include "${OBS_INCLUDE}")
+if(NOT EXISTS "${VENDOR}/vst3/pluginterfaces/base/funknown.h")
+  message(FATAL_ERROR "The VST3 interfaces aren't set up. Run windows/scripts/bootstrap.ps1 (build.ps1 does this for you).")
+endif()
+target_include_directories(OmniCore PRIVATE include "${OBS_INCLUDE}" "${VENDOR}/vst3")
 target_compile_definitions(OmniCore PRIVATE NOMINMAX UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(OmniCore PRIVATE /W3 /utf-8 /permissive- /wd4244 /wd4267)
 # obs.dll is loaded on first use, after oc_start points the DLL search at the
 # app's obs\bin\64bit folder, so OmniCore.dll itself loads from anywhere.
-target_link_libraries(OmniCore PRIVATE "${OBS_LIB}" d3d11 dxgi shell32 ole32 delayimp)
+target_link_libraries(OmniCore PRIVATE "${OBS_LIB}" d3d11 dxgi shell32 ole32 mmdevapi version delayimp)
 target_link_options(OmniCore PRIVATE /DELAYLOAD:obs.dll)

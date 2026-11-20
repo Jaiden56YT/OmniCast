@@ -212,24 +212,103 @@ audio cable, and Discord uses the cable's other end as its microphone:
 VB-CABLE's licence doesn't allow other apps' installers to install it without
 VB-Audio's agreement, so OmniCast's installer only points you to it for now.
 
-**Stream audio without your mic** plays desktop audio and the capture card
+**Stream audio without your mic** plays desktop audio, the app channels and
+the capture card (not Discord's own channel, so a call never hears itself)
 into a second cable, for apps that take a microphone (a second Discord
 account in a watch-party channel, say). It needs a second cable: VB-CABLE A+B
 or Voicemeeter. Discord's own Go Live doesn't need it: on Windows, Go Live
 takes sound from the window you share. Only virtual cables are offered (not
 speakers), and one cable can't carry both outputs.
 
+## Mixer: app channels and your headphones mix
+
+Every channel in Studio › Audio has two levels, each with its own mute:
+
+- **Stream** (the broadcast icon): what goes to the stream and recordings.
+- **Monitor** (the headphones icon): what you hear in the **monitor mix**,
+  played on the output picked with the headphones button at the top of the
+  Audio card (Windows' default output unless you choose one).
+
+The monitor mix is mostly for things you wouldn't hear otherwise: your mic
+with its plugins, and the capture card (on by default). Mic and desktop audio
+start off in it, so you don't hear yourself or your desktop twice.
+
+**+** gives a running app its own channel (Windows 10 2004 or later): Spotify,
+a game, Chrome, Discord. Its sound then comes out of desktop audio, so it's
+never on stream twice, and you control it on its own. Desktop audio is
+everything except OmniCast and the apps with their own channel, so OmniCast
+never captures its own headphones mix. Unlike on a Mac, Windows can't silence
+an app at its source while still letting OmniCast capture it, so apps keep
+playing through your speakers as usual. Spotify gets a channel by itself the
+first time OmniCast sees it installed; × removes a channel.
+
+## Mic plugins
+
+**FX** on the mic opens its plugin chain: up to 4 VST3 effects (STACKS and
+Muze come first in the list when they're installed; any installed VST3 effect
+works). Each one has **Open editor** (the plugin's own window), **On**, and
+**Remove**. They run on the mic before its level, so the stream, recordings,
+the monitor mix and the Discord voice output all get them. Plugins load only
+while they're in the chain, and their settings are saved when OmniCast closes.
+Plugins with tempo-synced effects see a steady 120 BPM transport.
+
+## Overlays
+
+Overlays sit on top of whatever scene is on air and stay put through scene
+transitions. They're drawn once as images and only redrawn when something
+changes, so they cost next to nothing per frame.
+
+- **Chat** (Settings › Chat): Twitch, Kick and YouTube chat merged into one,
+  read without logging in (nothing is ever posted). Type your channel names
+  and click **Save and reconnect**; YouTube connects once you're live. Lines
+  show the platform, badges (owner, moderator, VIP, member, verified), the
+  name in its colour and emotes, with a black outline so they read on any
+  background. Text size, hiding old lines, and also showing it on 9:16 are in
+  the same section; **Add test messages** shows how it looks.
+- **Now playing** (Settings › Music): when a song starts in the music app on
+  stream, a card with its cover, title and artist fades in for 30 seconds.
+  It's read from Windows' media controls, so it needs no sign-in. Pick the
+  corner and whether it's on 9:16 too; **Preview card** shows it now.
+- **Discord call** (Settings › Discord call on stream): the people in your
+  Discord voice call, with a green ring while they talk, along the top of the
+  16:9 canvas. Discord only shares this with an app you register yourself:
+  the section has the four steps (Client ID and Secret, then Authorize in
+  Discord).
+- **Your PNGtuber**: pick an idle and a talking image; it talks when your mic
+  does (sensitivity High, Medium or Low).
+
+## Music switch
+
+Settings › Music › **Music on stream** picks Spotify or [untitled]. The other
+one is muted on stream (if it has its own channel) but stays in your monitor
+mix, and the now-playing card follows the one on stream. [untitled] has no
+Windows app, so on Windows it means your browser.
+
+## Stream info
+
+**Stream info…** in Studio sets the title on every connected platform at once,
+and the game on Twitch and Kick (YouTube's category can't be set by apps).
+Connect accounts in Settings › Accounts first. Each platform needs an app you
+register yourself, which takes a minute, and the steps are in that section:
+Twitch needs only a Client ID; Kick and YouTube need a Client ID and Secret.
+Secrets and sign-ins are kept in Windows Credential Manager.
+
+## Virtual camera
+
+**Start virtual camera** in Studio shows the 16:9 or 9:16 canvas (the menu on
+the button) as a webcam in Zoom, Discord, Teams and browsers. It's the camera
+OBS uses on Windows, so apps list it as "OBS Virtual Camera", and OBS Studio
+doesn't need to be installed or running. Windows needs to register it once
+with admin rights: the installer does it on a normal (admin) install, and
+otherwise OmniCast asks the first time you start it. Uninstalling removes it
+only if it was OmniCast's copy.
+
 ## Coming next
 
-These OmniCast for Mac features aren't in the Windows app yet:
-
-- Per-app audio channels and a separate headphones (monitor) mix
-- Mic plugins (VST3 builds of STACKS and Muze), Muze following the music
-- Overlays: merged Twitch/Kick/YouTube chat, Discord call overlay, now playing
-- Spotify / [untitled] music switch
-- Setting stream titles and games on all platforms at once
-- Mic plugins on the Discord voice output, and Discord's call overlay
-- Virtual camera
+- Moving and resizing overlays by dragging them on the preview (they use
+  sensible default places for now)
+- Muze following the music's key and tempo
+- Animated PNGtuber and call images (the first frame shows for now)
 - Installing VB-CABLE automatically (waiting on VB-Audio's permission; see
   Discord audio above)
 
@@ -284,13 +363,17 @@ recording both canvases for 30 s with full-screen motion on the display:
    `obs.dll`, the D3D11 renderer, FFmpeg, x264 and the 12 plugins OmniCast
    loads) and the source tarball (for the libobs headers). It keeps only what
    OmniCast uses in `windows\vendor\obs-runtime` (about 60 MB) and
-   `windows\vendor\obs-include`. Both are git-ignored; `-Refresh` extracts them
-   again.
+   `windows\vendor\obs-include`. It also gets Steinberg's VST3 plug-in
+   interfaces 3.8.1 (MIT, headers only, for hosting mic plugins) from GitHub,
+   checked the same way, into `windows\vendor\vst3`. All of it is
+   git-ignored; `-Refresh` extracts it again.
 2. Finds Visual Studio's C++ tools with `vswhere`.
 3. Builds **OmniCore.dll** (`windows\core`) with CMake and Ninja. OBS doesn't
    ship an import library for `obs.dll`, so CMake makes one from its exports.
 4. Publishes the app (`windows\app`) self-contained for x64, then copies
    OmniCore.dll and the libobs runtime (in an `obs` subfolder) next to it.
+   The app draws its overlays with Win2D (a NuGet package, like the Windows
+   App SDK).
 
 Logs are in `%LOCALAPPDATA%\OmniCast\obs\logs` (Settings › About › Open logs);
 settings in `%LOCALAPPDATA%\OmniCast\settings.json`.
@@ -302,12 +385,17 @@ The script notices the list changed and extracts again.
 
 - `windows\core`: **OmniCore**, a C++ DLL over libobs with a flat C API
   (`include\omnicore.h`): canvases, scenes and transitions, encoder choice, previews,
-  streaming, recording, audio meters, the Discord outputs (`src\audio_out.cpp`).
+  streaming, recording, audio meters, the Discord outputs (`src\audio_out.cpp`),
+  per-app and desktop audio (`src\proc_audio.cpp`), the monitor mix
+  (`src\monitor.cpp`), overlay layers (`src\overlay.cpp`), the VST3 host
+  (`src\vst3.cpp`) and the virtual camera (`src\vcam.cpp`).
 - `windows\app`: the **WinUI 3** app in C#, calling OmniCore through
   P/Invoke (`Engine\Native.cs`). `Engine\EngineHost.cs` holds the app's state;
   `Pages\` are Studio, Destinations and Settings; `Services\` has settings,
   Credential Manager, the tray icon and hotkeys, notifications, start with
-  Windows.
+  Windows, and what's playing. `Chat\` reads Twitch, Kick and YouTube chat;
+  `Discord\` talks to Discord's local RPC; `Accounts\` signs in for stream
+  info; `Overlays\` draws the chat, now-playing card, call and PNGtuber.
 - `windows\installer\OmniCast.iss`: the Inno Setup installer.
 - `windows\scripts`: getting libobs, drawing the icons.
 - `windows\build.ps1`: the one build command.
@@ -317,4 +405,6 @@ The script notices the list changed and extracts again.
 OmniCast is free software under the GNU General Public License, version 2 or
 later (see `LICENSE` at the top of the repository), because libobs is
 GPL-2.0-or-later. OBS and OBS Studio are trademarks of the OBS Project;
-OmniCast isn't affiliated with it.
+OmniCast isn't affiliated with it. VST is a trademark of Steinberg Media
+Technologies GmbH; the VST3 interfaces OmniCast builds against are MIT
+licensed.

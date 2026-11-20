@@ -60,9 +60,42 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\OmniCast.exe"; Description: "Open OmniCast"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; The virtual camera (OBS's DirectShow camera, shipped in the app folder).
+; Registered only on admin installs, and only when OBS Studio hasn't already
+; registered its own copy. Per-user installs set it up from the app instead.
+Filename: "{sys}\regsvr32.exe"; Parameters: "/s ""{app}\obs\data\obs-plugins\win-dshow\obs-virtualcam-module64.dll"""; Flags: runhidden; Check: IsAdminInstallMode and not VCamRegistered(True)
+Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s ""{app}\obs\data\obs-plugins\win-dshow\obs-virtualcam-module32.dll"""; Flags: runhidden; Check: IsAdminInstallMode and not VCamRegistered(False)
 Filename: "https://vb-audio.com/Cable/"; Description: "Get VB-CABLE, the free virtual audio cable for sending your mic to Discord (opens VB-Audio's website)"; Flags: shellexec postinstall skipifsilent runasoriginaluser; Check: not VBCableInstalled
 
+[UninstallRun]
+; Unregister the virtual camera only when it's this install's copy (not OBS Studio's).
+Filename: "{sys}\regsvr32.exe"; Parameters: "/u /s ""{app}\obs\data\obs-plugins\win-dshow\obs-virtualcam-module64.dll"""; Flags: runhidden; RunOnceId: "VCam64"; Check: VCamIsOurs(True)
+Filename: "{syswow64}\regsvr32.exe"; Parameters: "/u /s ""{app}\obs\data\obs-plugins\win-dshow\obs-virtualcam-module32.dll"""; Flags: runhidden; RunOnceId: "VCam32"; Check: VCamIsOurs(False)
+
 [Code]
+const
+  VCamKey = 'CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}\InprocServer32';
+
+// The DLL the 64-bit or 32-bit virtual camera is registered to, or ''.
+function VCamPath(Is64: Boolean): String;
+var
+  Root: Integer;
+begin
+  if Is64 then Root := HKCR64 else Root := HKCR32;
+  if not RegQueryStringValue(Root, VCamKey, '', Result) then
+    Result := '';
+end;
+
+function VCamRegistered(Is64: Boolean): Boolean;
+begin
+  Result := (VCamPath(Is64) <> '') and FileExists(VCamPath(Is64));
+end;
+
+function VCamIsOurs(Is64: Boolean): Boolean;
+begin
+  Result := Pos(Lowercase(ExpandConstant('{app}')), Lowercase(VCamPath(Is64))) = 1;
+end;
+
 // True when a VB-Audio virtual cable is installed: Windows lists an audio
 // output whose driver is VB-Audio's.
 function VBCableInstalled: Boolean;
